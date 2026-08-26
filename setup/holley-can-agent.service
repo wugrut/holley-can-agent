@@ -1,0 +1,38 @@
+[Unit]
+Description=Holley CAN Agent — ECU Monitoring & Agentic Interface
+Documentation=https://github.com/your-repo/holley-can-agent
+After=network.target sys-subsystem-net-devices-can0.device
+Wants=sys-subsystem-net-devices-can0.device
+
+[Service]
+Type=simple
+User=holley
+Group=holley
+WorkingDirectory=/opt/holley-can-agent
+ExecStartPre=/opt/holley-can-agent/setup/socketcan_init.sh
+ExecStart=/opt/holley-can-agent/.venv/bin/python /opt/holley-can-agent/main.py
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Security hardening — run as non-root but with CAN access
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/holley-can-agent/data
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=CAN_INTERFACE=can0
+Environment=CAN_BITRATE=1000000
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=holley-can-agent
+
+[Install]
+WantedBy=multi-user.target

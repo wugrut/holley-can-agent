@@ -1,0 +1,79 @@
+# =============================================================================
+# Holley CAN Agent — Configuration
+# =============================================================================
+
+can:
+  interface: socketcan       # SocketCAN interface type
+  channel: can0              # Network interface name
+  bitrate: 1000000           # 1 Mbit/s per HEFI spec
+  id_mask: 0xFFFFF800        # Mask to strip ECU serial from CAN IDs
+  receive_own_messages: false
+
+ecu:
+  # Serial number printed on the back of the ECU (decimal).
+  # Set to null for auto-detection at startup.
+  serial_number: null
+  type: terminator_x_max
+  # Firmware version hint (affects channel availability)
+  firmware: null
+
+storage:
+  database: ./data/holley_can.db
+  sample_rate_hz: 1          # Long-term storage downsample rate
+  retention_days: 90         # Automatic cleanup of old data
+  wal_mode: true             # SQLite WAL for concurrent access
+
+alerts:
+  enabled: true
+  lean_afr_offset: 0.5       # Trigger if wideband > target + this value
+  rich_afr_offset: 1.0       # Trigger if wideband < target - this value
+  timing_retard_deg: 3.0     # Trigger if timing drops > this from baseline
+  overboost_map_kpa: 250.0   # ~22 psi boost, adjust for your setup
+  low_voltage_v: 13.0        # Battery voltage warning threshold
+  sensor_dropout_s: 1.0      # Seconds without update before alert
+  can_error_rate_pct: 1.0    # Error frame percentage threshold
+
+api:
+  host: 0.0.0.0              # Listen on all interfaces (WiFi accessible)
+  port: 8420
+  cors_origins:
+    - "*"                    # Allow all origins for local network access
+
+dashboard:
+  title: "Holley Terminator X Max"
+  update_rate_ms: 50         # WebSocket push interval (20 Hz)
+  gauges:
+    - channel: rpm
+      label: "RPM"
+      min: 0
+      max: 7000
+      redline: 6200
+      unit: "rpm"
+    - channel: map_kpa
+      label: "MAP"
+      min: 0
+      max: 300
+      unit: "kPa"
+    - channel: afr_avg
+      label: "AFR"
+      min: 10
+      max: 20
+      target_channel: target_afr
+      unit: "AFR"
+    - channel: ignition_timing
+      label: "Timing"
+      min: -10
+      max: 45
+      unit: "°BTDC"
+    - channel: coolant_temp
+      label: "Coolant"
+      min: 100
+      max: 260
+      warning: 220
+      unit: "°F"
+    - channel: battery_voltage
+      label: "Battery"
+      min: 10
+      max: 16
+      warning_low: 13.0
+      unit: "V"

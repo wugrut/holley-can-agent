@@ -1,0 +1,61 @@
+VERSION ""
+NS_ :
+BS_:
+BU_: ECU
+
+BO_ 2147487744 HEFI_RPM: 8 ECU
+ SG_ RPM : 0|32@1+ (1,0) [0|8000] "rpm" Vector__XXX
+ SG_ RPM_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487745 HEFI_MAP: 8 ECU
+ SG_ MAP_kPa : 0|32@1+ (1,0) [0|400] "kPa" Vector__XXX
+ SG_ Baro_kPa : 32|32@1+ (1,0) [0|120] "kPa" Vector__XXX
+
+BO_ 2147487746 HEFI_TPS: 8 ECU
+ SG_ TPS_Pct : 0|32@1+ (1,0) [0|100] "%" Vector__XXX
+ SG_ TPS_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487747 HEFI_CLT: 8 ECU
+ SG_ Coolant_Temp_F : 0|32@1+ (1,0) [-40|300] "degF" Vector__XXX
+ SG_ CLT_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487748 HEFI_Target_AFR: 8 ECU
+ SG_ Target_AFR : 0|32@1+ (1,0) [10|20] "AFR" Vector__XXX
+ SG_ TAFR_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487749 HEFI_AFR_Left: 8 ECU
+ SG_ AFR_Left : 0|32@1+ (1,0) [8|22] "AFR" Vector__XXX
+ SG_ AFR_L_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487750 HEFI_AFR_Right: 8 ECU
+ SG_ AFR_Right : 0|32@1+ (1,0) [8|22] "AFR" Vector__XXX
+ SG_ AFR_R_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487751 HEFI_AFR_Avg: 8 ECU
+ SG_ AFR_Avg : 0|32@1+ (1,0) [8|22] "AFR" Vector__XXX
+ SG_ AFR_Avg_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487754 HEFI_Ign_Timing: 8 ECU
+ SG_ Ign_Timing_BTDC : 0|32@1+ (1,0) [-20|50] "degBTDC" Vector__XXX
+ SG_ Timing_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487755 HEFI_Battery: 8 ECU
+ SG_ Battery_V : 0|32@1+ (1,0) [0|18] "V" Vector__XXX
+ SG_ Batt_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487763 HEFI_Trans_Gear: 8 ECU
+ SG_ Current_Gear : 0|32@1+ (1,0) [0|4] "" Vector__XXX
+ SG_ Gear_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487764 HEFI_Trans_Temp: 8 ECU
+ SG_ Trans_Temp_F : 0|32@1+ (1,0) [-40|350] "degF" Vector__XXX
+ SG_ TTemp_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 2147487765 HEFI_TCC: 8 ECU
+ SG_ TCC_Duty_Pct : 0|32@1+ (1,0) [0|100] "%" Vector__XXX
+ SG_ TCC_Status : 32|32@1+ (1,0) [0|0] "" Vector__XXX
+
+CM_ "Holley HEFI 3rd Party CAN Communications Protocol - Community DBC";
+CM_ "CAN IDs shown are BASE IDs. Actual ID = Base + (ECU Serial & 0x7FF)";
+CM_ "Payload: Two 32-bit big-endian IEEE 754 floats per frame";
+CM_ "Source: Community reverse-engineering, Nefarious Motorsports, RealDash";

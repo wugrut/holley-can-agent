@@ -1,0 +1,21 @@
+# CAN bus
+python-can>=4.3.0
+cantools>=39.0.0
+
+# Async runtime
+asyncio-mqtt>=0.16.0  # optional, for future MQTT integration
+
+# Database
+aiosqlite>=0.19.0
+
+# Web API + Dashboard
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+jinja2>=3.1.0
+
+# Configuration
+pyyaml>=6.0
+
+# Utilities
+structlog>=24.1.0
