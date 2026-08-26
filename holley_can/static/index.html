@@ -32,6 +32,28 @@
         </div>
     </header>
 
+    <!-- Controls/Settings Panel -->
+    <section id="control-panel">
+        <div class="control-group">
+            <span class="control-label">LAYOUT:</span>
+            <button id="btn-layout-grid" class="control-btn active">GRID</button>
+            <button id="btn-layout-track" class="control-btn">TRACK</button>
+            <button id="btn-layout-diag" class="control-btn">DIAG</button>
+        </div>
+        
+        <div class="control-group">
+            <span class="control-label">LOGGER:</span>
+            <button id="btn-log-toggle" class="control-btn log-start">REC</button>
+            <span id="log-status-text" class="log-status-idle">IDLE</span>
+            <button id="btn-log-list" class="control-btn">LOGS</button>
+        </div>
+        
+        <div class="control-group right-align">
+            <button id="btn-theme-toggle" class="control-btn circle-btn" aria-label="Toggle Day/Night Mode">🌓</button>
+            <button id="btn-voice-toggle" class="control-btn circle-btn" aria-label="Toggle Voice Alarms">🔊</button>
+        </div>
+    </section>
+
     <!-- Alert Banner -->
     <div id="alert-banner" class="alert-banner hidden">
         <div class="alert-icon">⚠</div>
@@ -39,149 +61,140 @@
         <button id="alert-dismiss" class="alert-dismiss" aria-label="Dismiss alert">✕</button>
     </div>
 
-    <!-- Main Gauge Grid -->
-    <main id="gauge-grid">
-        <!-- RPM — Full-width arc gauge -->
-        <div class="gauge-card gauge-rpm" id="gauge-card-rpm">
-            <div class="gauge-header">
-                <span class="gauge-label">RPM</span>
-                <span class="gauge-unit">rev/min</span>
+    <div id="dashboard-content">
+        <!-- Grid Layout (Dynamically Populated) -->
+        <main id="gauge-grid" class="layout-section">
+            <!-- Populated by initGrid() in dashboard.js -->
+        </main>
+
+        <!-- Track Layout (High Contrast Minimal) -->
+        <main id="track-grid" class="layout-section hidden">
+            <!-- Large RPM -->
+            <div class="gauge-card track-card track-rpm">
+                <div class="gauge-header">
+                    <span class="gauge-label">RPM</span>
+                </div>
+                <div class="gauge-body">
+                    <span id="track-value-rpm" class="track-value-large">0</span>
+                </div>
             </div>
-            <div class="gauge-body">
-                <canvas id="gauge-rpm" width="480" height="260"></canvas>
-                <div class="gauge-value-overlay">
-                    <span id="value-rpm" class="gauge-value-large">0</span>
+            <!-- Large Boost -->
+            <div class="gauge-card track-card track-boost">
+                <div class="gauge-header">
+                    <span class="gauge-label">BOOST</span>
+                    <span id="track-unit-map" class="gauge-unit">psi</span>
+                </div>
+                <div class="gauge-body">
+                    <span id="track-value-map" class="track-value-large">0.0</span>
+                </div>
+            </div>
+            <!-- Large AFR -->
+            <div class="gauge-card track-card track-afr">
+                <div class="gauge-header">
+                    <span class="gauge-label">AFR</span>
+                </div>
+                <div class="gauge-body">
+                    <span id="track-value-afr" class="track-value-large">14.7</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Diagnostic Layout -->
+        <main id="diag-grid" class="layout-section hidden">
+            <div class="gauge-card diag-card">
+                <div class="gauge-header">
+                    <span class="gauge-label">DIAGNOSTIC TELEMETRY</span>
+                </div>
+                <div class="diag-body">
+                    <table id="diag-table">
+                        <thead>
+                            <tr>
+                                <th>Channel</th>
+                                <th>Description</th>
+                                <th>Value</th>
+                                <th>Unit</th>
+                                <th>Last Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diag-list">
+                            <!-- Populated dynamically by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Logs Modal -->
+    <div id="logs-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Recorded Logs</h3>
+                <button id="modal-close" class="modal-close-btn">✕</button>
+            </div>
+            <div class="modal-body">
+                <table id="sessions-table">
+                    <thead>
+                        <tr>
+                            <th>Run Name</th>
+                            <th>Start Time</th>
+                            <th>Duration</th>
+                            <th>CSV Export</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessions-list">
+                        <!-- Populated dynamically by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gauge Settings Modal -->
+    <div id="gauge-settings-modal" class="modal hidden">
+        <div class="modal-content modal-content-small">
+            <div class="modal-header">
+                <h3>Gauge Settings</h3>
+                <button id="gauge-settings-close" class="modal-close-btn">✕</button>
+            </div>
+            <div class="modal-body form-body">
+                <input type="hidden" id="setting-gauge-index">
+                <div class="form-group">
+                    <label for="setting-channel">Telemetry Channel</label>
+                    <select id="setting-channel" class="form-control">
+                        <!-- Populated by JS -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="setting-type">Display Style</label>
+                    <select id="setting-type" class="form-control">
+                        <option value="arc">Arc (Full Width)</option>
+                        <option value="radial">Radial Dial</option>
+                        <option value="bar">Horizontal Bar</option>
+                        <option value="compact-value">Compact Number</option>
+                        <option value="compact-ring">Compact Progress Ring</option>
+                    </select>
+                </div>
+                <div class="modal-actions-grid">
+                    <button id="btn-move-left" class="action-btn secondary-btn">◀ Move Left</button>
+                    <button id="btn-move-right" class="action-btn secondary-btn">Move Right ▶</button>
+                </div>
+                <div class="modal-actions">
+                    <button id="btn-delete-gauge" class="action-btn danger-btn">Delete Gauge</button>
+                    <button id="btn-save-gauge" class="action-btn primary-btn">Save Changes</button>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- MAP / Boost -->
-        <div class="gauge-card" id="gauge-card-map">
-            <div class="gauge-header">
-                <span class="gauge-label">BOOST / VAC</span>
-                <span class="gauge-unit" id="map-unit">kPa</span>
-            </div>
-            <div class="gauge-body">
-                <canvas id="gauge-map" width="240" height="240"></canvas>
-                <div class="gauge-value-overlay">
-                    <span id="value-map" class="gauge-value-medium">0.0</span>
-                    <span id="value-map-secondary" class="gauge-value-secondary">101.3 kPa</span>
-                </div>
-            </div>
+    <!-- Connection Loss Overlay -->
+    <div id="connection-overlay" class="connection-overlay hidden">
+        <div class="overlay-content">
+            <div class="overlay-icon">⚡</div>
+            <h2>CONNECTION LOST</h2>
+            <p>WiFi connection lost or engine ECU offline. Reconnecting...</p>
         </div>
-
-        <!-- AFR with target overlay -->
-        <div class="gauge-card" id="gauge-card-afr">
-            <div class="gauge-header">
-                <span class="gauge-label">AFR</span>
-                <span class="gauge-unit">Air-Fuel Ratio</span>
-            </div>
-            <div class="gauge-body">
-                <canvas id="gauge-afr" width="240" height="240"></canvas>
-                <div class="gauge-value-overlay">
-                    <span id="value-afr" class="gauge-value-medium">14.7</span>
-                    <span id="value-afr-target" class="gauge-value-secondary">Target: 14.7</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Ignition Timing -->
-        <div class="gauge-card" id="gauge-card-timing">
-            <div class="gauge-header">
-                <span class="gauge-label">TIMING</span>
-                <span class="gauge-unit">°BTDC</span>
-            </div>
-            <div class="gauge-body">
-                <canvas id="gauge-timing" width="240" height="240"></canvas>
-                <div class="gauge-value-overlay">
-                    <span id="value-timing" class="gauge-value-medium">0.0</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Coolant Temp -->
-        <div class="gauge-card" id="gauge-card-coolant">
-            <div class="gauge-header">
-                <span class="gauge-label">COOLANT</span>
-                <span class="gauge-unit">°F</span>
-            </div>
-            <div class="gauge-body gauge-body-bar">
-                <div class="bar-gauge-container">
-                    <div id="bar-coolant" class="bar-gauge-fill"></div>
-                    <div class="bar-gauge-markers">
-                        <span>100</span><span>160</span><span>220</span><span>260</span>
-                    </div>
-                </div>
-                <span id="value-coolant" class="gauge-value-medium bar-value">185</span>
-            </div>
-        </div>
-
-        <!-- Battery Voltage -->
-        <div class="gauge-card" id="gauge-card-battery">
-            <div class="gauge-header">
-                <span class="gauge-label">BATTERY</span>
-                <span class="gauge-unit">Volts</span>
-            </div>
-            <div class="gauge-body gauge-body-bar">
-                <div class="bar-gauge-container">
-                    <div id="bar-battery" class="bar-gauge-fill"></div>
-                    <div class="bar-gauge-markers">
-                        <span>10</span><span>12</span><span>14</span><span>16</span>
-                    </div>
-                </div>
-                <span id="value-battery" class="gauge-value-medium bar-value">0.0</span>
-            </div>
-        </div>
-
-        <!-- Throttle Position -->
-        <div class="gauge-card gauge-compact" id="gauge-card-tps">
-            <div class="gauge-header">
-                <span class="gauge-label">TPS</span>
-            </div>
-            <div class="gauge-body gauge-body-compact">
-                <div class="progress-ring-container">
-                    <svg id="ring-tps" viewBox="0 0 100 100" class="progress-ring">
-                        <circle class="progress-ring-bg" cx="50" cy="50" r="42"/>
-                        <circle id="ring-tps-fill" class="progress-ring-fill" cx="50" cy="50" r="42"/>
-                    </svg>
-                    <span id="value-tps" class="ring-value">0%</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Transmission Gear -->
-        <div class="gauge-card gauge-compact" id="gauge-card-gear">
-            <div class="gauge-header">
-                <span class="gauge-label">GEAR</span>
-            </div>
-            <div class="gauge-body gauge-body-compact">
-                <div class="gear-display">
-                    <span id="value-gear" class="gear-number">N</span>
-                    <span id="value-tcc" class="tcc-status">TCC: —</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Fuel Learn -->
-        <div class="gauge-card gauge-compact" id="gauge-card-learn">
-            <div class="gauge-header">
-                <span class="gauge-label">FUEL LEARN</span>
-            </div>
-            <div class="gauge-body gauge-body-compact">
-                <span id="value-learn" class="gauge-value-medium compact-value">0.0%</span>
-            </div>
-        </div>
-
-        <!-- IAT -->
-        <div class="gauge-card gauge-compact" id="gauge-card-iat">
-            <div class="gauge-header">
-                <span class="gauge-label">IAT</span>
-            </div>
-            <div class="gauge-body gauge-body-compact">
-                <span id="value-iat" class="gauge-value-medium compact-value">— °F</span>
-            </div>
-        </div>
-    </main>
+    </div>
 
     <!-- Footer Stats -->
     <footer id="footer-stats">

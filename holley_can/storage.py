@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS alerts_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts_log(timestamp);
+
+CREATE TABLE IF NOT EXISTS log_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start_time REAL NOT NULL,
+    end_time REAL
+);
 """
 
 
@@ -320,6 +327,103 @@ class TimeSeriesStorage:
             logger.info("Cleaned up %d rows older than %d days", deleted, self.retention_days)
             await self._db.execute("PRAGMA optimize")
         return deleted
+
+    # ── Run Logger Sessions ─────────────────────────────────────────────
+
+    async def start_session(self, name: str) -> int:
+        """Start a new logging session. Returns the session ID."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Automatically stop any current active session first
+        await self.stop_active_session()
+
+        now = time.time()
+        cursor = await self._db.execute(
+            "INSERT INTO log_sessions (name, start_time) VALUES (?, ?)",
+            (name, now)
+        )
+        await self._db.commit()
+        session_id = cursor.lastrowid
+        logger.info("Started logging session %d: %s", session_id, name)
+        return session_id
+
+    async def stop_active_session(self) -> Optional[int]:
+        """Stop the currently active session. Returns the stopped session ID, or None."""
+        if not self._db:
+            return None
+
+        active = await self.get_active_session()
+        if not active:
+            return None
+
+        session_id = active["id"]
+        now = time.time()
+        await self._db.execute(
+            "UPDATE log_sessions SET end_time = ? WHERE id = ?",
+            (now, session_id)
+        )
+        await self._db.commit()
+        logger.info("Stopped logging session %d", session_id)
+        return session_id
+
+    async def get_active_session(self) -> Optional[dict[str, Any]]:
+        """Return details of the currently active session, if any."""
+        if not self._db:
+            return None
+
+        async with self._db.execute(
+            "SELECT id, name, start_time, end_time FROM log_sessions WHERE end_time IS NULL LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {"id": row[0], "name": row[1], "start_time": row[2], "end_time": row[3]}
+        return None
+
+    async def get_sessions(self) -> list[dict[str, Any]]:
+        """Return a list of all recorded sessions."""
+        if not self._db:
+            return []
+
+        rows = []
+        async with self._db.execute(
+            "SELECT id, name, start_time, end_time FROM log_sessions ORDER BY start_time DESC"
+        ) as cursor:
+            async for row in cursor:
+                rows.append({"id": row[0], "name": row[1], "start_time": row[2], "end_time": row[3]})
+        return rows
+
+    async def get_session_data(self, session_id: int) -> list[dict[str, Any]]:
+        """Return all can_data rows that fall within the session's time window."""
+        if not self._db:
+            return []
+
+        # Get session time bounds
+        async with self._db.execute(
+            "SELECT start_time, end_time FROM log_sessions WHERE id = ?",
+            (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return []
+            start_time, end_time = row
+
+        if end_time is None:
+            end_time = time.time()
+
+        # Query all channels in that window
+        sql = """
+            SELECT timestamp, channel, label, value_a, value_b, unit
+            FROM can_data
+            WHERE timestamp BETWEEN ? AND ?
+            ORDER BY timestamp, channel
+        """
+        rows = []
+        async with self._db.execute(sql, (start_time, end_time)) as cursor:
+            columns = [desc[0] for desc in cursor.description]
+            async for r in cursor:
+                rows.append(dict(zip(columns, r)))
+        return rows
 
     # ── Internal ────────────────────────────────────────────────────────
 

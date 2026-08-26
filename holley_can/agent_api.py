@@ -16,9 +16,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
+import csv
+import io
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .alerts import Alert
@@ -232,6 +234,70 @@ def create_app(
                 for name, info in snapshot.items()
             ]
         }
+
+    # ── Run Logger API ──────────────────────────────────────────────────
+
+    @app.post("/api/log/start")
+    async def start_logging(name: str = Query("run_log", description="Session name")):
+        """Start a new logging session."""
+        session_id = await storage.start_session(name)
+        return {"status": "success", "session_id": session_id, "name": name}
+
+    @app.post("/api/log/stop")
+    async def stop_logging():
+        """Stop the currently active logging session."""
+        session_id = await storage.stop_active_session()
+        if session_id:
+            return {"status": "success", "session_id": session_id}
+        return {"status": "error", "message": "No active logging session found"}
+
+    @app.get("/api/log/status")
+    async def get_logging_status():
+        """Return the current logging status."""
+        active = await storage.get_active_session()
+        return {
+            "logging": active is not None,
+            "session": active
+        }
+
+    @app.get("/api/log/sessions")
+    async def get_sessions():
+        """Get all recorded logging sessions."""
+        sessions = await storage.get_sessions()
+        return {"sessions": sessions}
+
+    @app.get("/api/log/export/{session_id}")
+    async def export_session_csv(session_id: int):
+        """Export session data as a downloadable CSV stream."""
+        data = await storage.get_session_data(session_id)
+        
+        def generate_csv():
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Header
+            writer.writerow(["timestamp", "channel", "label", "value_a", "value_b", "unit"])
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+            
+            for row in data:
+                writer.writerow([
+                    row["timestamp"],
+                    row["channel"],
+                    row.get("label", ""),
+                    row["value_a"],
+                    row.get("value_b", ""),
+                    row.get("unit", "")
+                ])
+                yield output.getvalue()
+                output.seek(0)
+                output.truncate(0)
+                
+        headers = {
+            "Content-Disposition": f"attachment; filename=holley_session_{session_id}.csv"
+        }
+        return StreamingResponse(generate_csv(), media_type="text/csv", headers=headers)
 
     # ── WebSocket ───────────────────────────────────────────────────────
 
