@@ -36,8 +36,9 @@
     <section id="control-panel">
         <div class="control-group">
             <span class="control-label">LAYOUT:</span>
-            <button id="btn-layout-grid" class="control-btn active">GRID</button>
-            <button id="btn-layout-track" class="control-btn">TRACK</button>
+            <select id="layout-selector" class="form-control" style="width: auto; padding: 4px 8px; margin-right: 8px;">
+                <!-- Populated by JS -->
+            </select>
             <button id="btn-layout-diag" class="control-btn">DIAG</button>
         </div>
         
@@ -67,37 +68,7 @@
             <!-- Populated by initGrid() in dashboard.js -->
         </main>
 
-        <!-- Track Layout (High Contrast Minimal) -->
-        <main id="track-grid" class="layout-section hidden">
-            <!-- Large RPM -->
-            <div class="gauge-card track-card track-rpm">
-                <div class="gauge-header">
-                    <span class="gauge-label">RPM</span>
-                </div>
-                <div class="gauge-body">
-                    <span id="track-value-rpm" class="track-value-large">0</span>
-                </div>
-            </div>
-            <!-- Large Boost -->
-            <div class="gauge-card track-card track-boost">
-                <div class="gauge-header">
-                    <span class="gauge-label">BOOST</span>
-                    <span id="track-unit-map" class="gauge-unit">psi</span>
-                </div>
-                <div class="gauge-body">
-                    <span id="track-value-map" class="track-value-large">0.0</span>
-                </div>
-            </div>
-            <!-- Large AFR -->
-            <div class="gauge-card track-card track-afr">
-                <div class="gauge-header">
-                    <span class="gauge-label">AFR</span>
-                </div>
-                <div class="gauge-body">
-                    <span id="track-value-afr" class="track-value-large">14.7</span>
-                </div>
-            </div>
-        </main>
+
 
         <!-- Diagnostic Layout -->
         <main id="diag-grid" class="layout-section hidden">
@@ -173,6 +144,7 @@
                         <option value="bar">Horizontal Bar</option>
                         <option value="compact-value">Compact Number</option>
                         <option value="compact-ring">Compact Progress Ring</option>
+                        <option value="track-large">Massive Text (Track Style)</option>
                     </select>
                 </div>
                 <div class="modal-actions-grid">

@@ -241,11 +241,12 @@ body {
 #gauge-grid {
     flex: 1;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: auto auto auto;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-auto-rows: min-content;
     gap: var(--gap);
     padding: var(--gap);
-    overflow: hidden;
+    overflow-y: auto;
+    align-items: start;
 }
 
 /* RPM spans full width */
@@ -536,7 +537,7 @@ canvas {
 /* Tablet (landscape) */
 @media (max-width: 1024px) {
     #gauge-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     }
 
     .gauge-rpm {
@@ -560,7 +561,7 @@ canvas {
     }
 
     #gauge-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
         overflow-y: auto;
     }
 
@@ -610,7 +611,7 @@ canvas {
 /* Ultra-wide */
 @media (min-width: 1440px) {
     #gauge-grid {
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         max-width: 1600px;
         margin: 0 auto;
     }
@@ -682,6 +683,30 @@ canvas {
 
 .control-btn:hover {
     border-color: var(--accent-cyan);
+    color: var(--text-primary);
+}
+
+#layout-selector {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    outline: none;
+}
+
+#layout-selector:hover, #layout-selector:focus {
+    border-color: var(--accent-cyan);
+    color: var(--text-primary);
+}
+
+#layout-selector option {
+    background: var(--bg-card);
     color: var(--text-primary);
 }
 

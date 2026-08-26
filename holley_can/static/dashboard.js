@@ -57,20 +57,36 @@ const CHANNEL_METADATA = {
     'vehicle_speed': { label: 'SPEED', unit: 'mph', min: 0, max: 200, color: '#00e5ff' },
 };
 
-const DEFAULT_GRID_CONFIG = [
-    { type: 'arc', channel: 'rpm' },
-    { type: 'radial', channel: 'map_kpa' },
-    { type: 'radial', channel: 'afr_avg' },
-    { type: 'radial', channel: 'ignition_timing' },
-    { type: 'bar', channel: 'coolant_temp' },
-    { type: 'bar', channel: 'battery_voltage' },
-    { type: 'compact-ring', channel: 'tps' },
-    { type: 'compact-gear', channel: 'trans_gear' },
-    { type: 'compact-value', channel: 'current_learn' },
-    { type: 'compact-value', channel: 'iat' },
+const DEFAULT_LAYOUTS = [
+    {
+        id: 'layout_grid',
+        name: 'GRID',
+        gauges: [
+            { type: 'arc', channel: 'rpm' },
+            { type: 'radial', channel: 'map_kpa' },
+            { type: 'radial', channel: 'afr_avg' },
+            { type: 'radial', channel: 'ignition_timing' },
+            { type: 'bar', channel: 'coolant_temp' },
+            { type: 'bar', channel: 'battery_voltage' },
+            { type: 'compact-ring', channel: 'tps' },
+            { type: 'compact-gear', channel: 'trans_gear' },
+            { type: 'compact-value', channel: 'current_learn' },
+            { type: 'compact-value', channel: 'iat' },
+        ]
+    },
+    {
+        id: 'layout_track',
+        name: 'TRACK',
+        gauges: [
+            { type: 'track-large', channel: 'rpm' },
+            { type: 'track-large', channel: 'map_kpa' },
+            { type: 'track-large', channel: 'afr_avg' }
+        ]
+    }
 ];
 
-let gridConfig = [];
+let layouts = [];
+let activeLayoutId = 'layout_grid';
 let pressTimer = null;
 
 // ─── WebSocket Connection ───────────────────────────────────────────────────
@@ -488,16 +504,7 @@ function render() {
     const boostPsi = (mapKpa - 101.325) * 0.145038;
     const afr = getAnimatedValue('afr_avg', getChannelValue('afr_avg'));
 
-    // Update Track Layout elements
-    if (state.activeLayout === 'track') {
-        const trackRpmEl = document.getElementById('track-value-rpm');
-        const trackMapEl = document.getElementById('track-value-map');
-        const trackAfrEl = document.getElementById('track-value-afr');
-        
-        if (trackRpmEl) trackRpmEl.textContent = Math.round(rpm).toLocaleString();
-        if (trackMapEl) trackMapEl.textContent = boostPsi.toFixed(1) + ' psi';
-        if (trackAfrEl) trackAfrEl.textContent = afr.toFixed(1);
-    }
+
 
     // Update Diagnostic table (throttled)
     if (state.activeLayout === 'diag' && (!state._lastDiagRender || Date.now() - state._lastDiagRender > 500)) {
@@ -820,42 +827,82 @@ function applyTheme(theme) {
 
 // ─── Layout Management ───────────────────────────────────────────────────────
 
+function populateLayoutSelector() {
+    const sel = document.getElementById('layout-selector');
+    if (!sel) return;
+    
+    sel.innerHTML = '';
+    layouts.forEach(l => {
+        const opt = document.createElement('option');
+        opt.value = l.id;
+        opt.textContent = l.name;
+        sel.appendChild(opt);
+    });
+    
+    const optNew = document.createElement('option');
+    optNew.value = 'add_new';
+    optNew.textContent = '+ New Layout...';
+    sel.appendChild(optNew);
+    
+    sel.value = activeLayoutId;
+}
+
 function initLayout() {
-    const btnGrid = document.getElementById('btn-layout-grid');
-    const btnTrack = document.getElementById('btn-layout-track');
+    const sel = document.getElementById('layout-selector');
     const btnDiag = document.getElementById('btn-layout-diag');
     
-    if (!btnGrid) return;
+    if (!sel) return;
     
+    const savedLayout = localStorage.getItem('dashboard_active_layout');
+    if (savedLayout && layouts.find(l => l.id === savedLayout)) {
+        activeLayoutId = savedLayout;
+    }
+    
+    populateLayoutSelector();
     applyLayout(state.activeLayout);
     
-    btnGrid.addEventListener('click', () => setLayout('grid'));
-    btnTrack.addEventListener('click', () => setLayout('track'));
-    btnDiag.addEventListener('click', () => setLayout('diag'));
+    sel.addEventListener('change', (e) => {
+        if (e.target.value === 'add_new') {
+            const name = prompt("Enter name for new layout:");
+            if (name && name.trim().length > 0) {
+                const newId = 'layout_' + Date.now();
+                layouts.push({ id: newId, name: name.trim(), gauges: [] });
+                saveGridConfig();
+                activeLayoutId = newId;
+                localStorage.setItem('dashboard_active_layout', activeLayoutId);
+                populateLayoutSelector();
+                setLayout('grid'); // switch to grid rendering view
+                initGrid();
+            } else {
+                e.target.value = activeLayoutId; // revert
+            }
+        } else {
+            activeLayoutId = e.target.value;
+            localStorage.setItem('dashboard_active_layout', activeLayoutId);
+            setLayout('grid'); // always grid renderer for custom layouts
+            initGrid();
+        }
+    });
+    
+    btnDiag.addEventListener('click', () => {
+        setLayout('diag');
+    });
 }
 
-function setLayout(layout) {
-    state.activeLayout = layout;
-    localStorage.setItem('dashboard_layout', layout);
-    applyLayout(layout);
+function setLayout(layoutType) {
+    state.activeLayout = layoutType;
+    applyLayout(layoutType);
 }
 
-function applyLayout(layout) {
+function applyLayout(layoutType) {
     document.querySelectorAll('.layout-section').forEach(el => {
         el.classList.add('hidden');
     });
+    document.getElementById('btn-layout-diag').classList.remove('active');
     
-    document.querySelectorAll('#btn-layout-grid, #btn-layout-track, #btn-layout-diag').forEach(el => {
-        el.classList.remove('active');
-    });
-    
-    if (layout === 'grid') {
+    if (layoutType === 'grid') {
         document.getElementById('gauge-grid').classList.remove('hidden');
-        document.getElementById('btn-layout-grid').classList.add('active');
-    } else if (layout === 'track') {
-        document.getElementById('track-grid').classList.remove('hidden');
-        document.getElementById('btn-layout-track').classList.add('active');
-    } else if (layout === 'diag') {
+    } else if (layoutType === 'diag') {
         document.getElementById('diag-grid').classList.remove('hidden');
         document.getElementById('btn-layout-diag').classList.add('active');
         renderDiagnostics();
@@ -916,19 +963,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function loadGridConfig() {
     try {
-        const saved = localStorage.getItem('dashboard_grid_config');
+        const saved = localStorage.getItem('dashboard_layouts_v2');
         if (saved) {
-            gridConfig = JSON.parse(saved);
+            layouts = JSON.parse(saved);
         } else {
-            gridConfig = JSON.parse(JSON.stringify(DEFAULT_GRID_CONFIG));
+            layouts = JSON.parse(JSON.stringify(DEFAULT_LAYOUTS));
         }
     } catch (e) {
-        gridConfig = JSON.parse(JSON.stringify(DEFAULT_GRID_CONFIG));
+        layouts = JSON.parse(JSON.stringify(DEFAULT_LAYOUTS));
     }
 }
 
 function saveGridConfig() {
-    localStorage.setItem('dashboard_grid_config', JSON.stringify(gridConfig));
+    localStorage.setItem('dashboard_layouts_v2', JSON.stringify(layouts));
+}
+
+function getActiveLayout() {
+    return layouts.find(l => l.id === activeLayoutId) || layouts[0];
 }
 
 function initGrid() {
@@ -938,14 +989,17 @@ function initGrid() {
     
     gridEl.innerHTML = ''; // Clear
     
-    gridConfig.forEach((cfg, index) => {
+    const layout = getActiveLayout();
+    
+    layout.gauges.forEach((cfg, index) => {
         const meta = CHANNEL_METADATA[cfg.channel] || { label: cfg.channel, unit: '' };
         let html = '';
         
         // Gauge outer card
         const isArc = cfg.type === 'arc';
         const isCompact = cfg.type.startsWith('compact');
-        const cardClass = `gauge-card ${isArc ? 'gauge-rpm' : ''} ${isCompact ? 'gauge-compact' : ''}`;
+        const isTrack = cfg.type === 'track-large';
+        const cardClass = `gauge-card ${isArc ? 'gauge-rpm' : ''} ${isCompact ? 'gauge-compact' : ''} ${isTrack ? 'track-card' : ''}`;
         
         html += `<div class="${cardClass}" data-index="${index}" id="dyn-card-${index}">`;
         
@@ -1002,6 +1056,10 @@ function initGrid() {
             html += `<div class="gauge-body gauge-body-compact">
                 <span id="dyn-val-${index}" class="gauge-value-medium compact-value">0</span>
             </div>`;
+        } else if (cfg.type === 'track-large') {
+            html += `<div class="gauge-body">
+                <span id="dyn-val-${index}" class="track-value-large" style="color: ${meta.color}">0</span>
+            </div>`;
         }
         
         html += `</div>`;
@@ -1031,15 +1089,11 @@ function attachLongPressEvents(node, index) {
     let pressTimer;
     
     const startPress = (e) => {
-        if(e.type === 'touchstart') {
-            // e.preventDefault(); // Don't prevent default, lets scrolling work if moving
-        }
         node.classList.add('gauge-long-press-active');
         pressTimer = window.setTimeout(() => {
             openGaugeSettings(index);
-            // haptic feedback if available
             if (navigator.vibrate) navigator.vibrate(50);
-        }, 750); // 750ms long press
+        }, 750);
     };
     
     const cancelPress = () => {
@@ -1054,11 +1108,12 @@ function attachLongPressEvents(node, index) {
     node.addEventListener('mouseleave', cancelPress);
     node.addEventListener('touchend', cancelPress);
     node.addEventListener('touchcancel', cancelPress);
-    node.addEventListener('touchmove', cancelPress, {passive: true}); // cancel on scroll
+    node.addEventListener('touchmove', cancelPress, {passive: true});
 }
 
 function renderGrid() {
-    gridConfig.forEach((cfg, idx) => {
+    const layout = getActiveLayout();
+    layout.gauges.forEach((cfg, idx) => {
         const meta = CHANNEL_METADATA[cfg.channel] || { label: cfg.channel, min: 0, max: 100, color: '#00e5ff' };
         const rawVal = getChannelValue(cfg.channel);
         const val = getAnimatedValue(cfg.channel, rawVal);
@@ -1076,25 +1131,24 @@ function renderGrid() {
             let displayColor = meta.color;
             let secText = '';
             
-            // Special handling for Boost
             if (meta.isBoost) {
                 const boostPsi = (val - 101.325) * 0.145038;
-                displayVal = val; // Draw raw kPa
-                if (boostPsi > 0) {
-                    displayColor = '#00e676'; // green for boost
-                } else {
-                    displayColor = '#00e5ff'; // cyan for vac
-                }
-                document.getElementById(`dyn-val-${idx}`).textContent = boostPsi.toFixed(1) + ' psi';
+                displayVal = val;
+                if (boostPsi > 0) displayColor = '#00e676';
+                else displayColor = '#00e5ff';
+                const el = document.getElementById(`dyn-val-${idx}`);
+                if (el) el.textContent = boostPsi.toFixed(1) + ' psi';
                 secText = val.toFixed(0) + ' kPa';
             } else if (cfg.channel.includes('afr')) {
                 const targetAfr = getChannelValue('target_afr') || 14.7;
                 const dev = Math.abs(val - targetAfr);
                 displayColor = dev > 1.0 ? '#ff1744' : (dev > 0.5 ? '#ff6d00' : '#00e676');
                 secText = `Target: ${targetAfr.toFixed(1)}`;
-                document.getElementById(`dyn-val-${idx}`).textContent = val.toFixed(1);
+                const el = document.getElementById(`dyn-val-${idx}`);
+                if(el) el.textContent = val.toFixed(1);
             } else {
-                document.getElementById(`dyn-val-${idx}`).textContent = val.toFixed(1);
+                const el = document.getElementById(`dyn-val-${idx}`);
+                if (el) el.textContent = val.toFixed(1);
             }
             
             drawRadialGauge(`dyn-canvas-${idx}`, displayVal, meta.min, meta.max, { color: displayColor, glowColor: displayColor + '33' });
@@ -1154,6 +1208,32 @@ function renderGrid() {
                 valEl.textContent = val.toFixed(1) + ' ' + (meta.unit || '');
             }
         }
+        else if (cfg.type === 'track-large') {
+            let displayVal = val.toFixed(1);
+            let displayColor = meta.color;
+            if (meta.isBoost) {
+                const boostPsi = (val - 101.325) * 0.145038;
+                displayVal = boostPsi.toFixed(1);
+                if (boostPsi > 0) displayColor = '#00e676';
+            } else if (cfg.channel === 'rpm') {
+                displayVal = Math.round(val).toLocaleString();
+            } else if (cfg.channel.includes('afr')) {
+                const targetAfr = getChannelValue('target_afr') || 14.7;
+                const dev = Math.abs(val - targetAfr);
+                displayColor = dev > 1.0 ? '#ff1744' : (dev > 0.5 ? '#ff6d00' : '#00e676');
+            }
+            
+            const valEl = document.getElementById(`dyn-val-${idx}`);
+            if (valEl) {
+                valEl.textContent = displayVal;
+                valEl.style.color = displayColor;
+            }
+            // Update the unit for boost if needed
+            if (meta.isBoost) {
+                const unitEl = document.getElementById(`dyn-unit-${idx}`);
+                if (unitEl) unitEl.textContent = 'psi';
+            }
+        }
     });
 }
 
@@ -1167,6 +1247,28 @@ function initGaugeSettings() {
     const leftBtn = document.getElementById('btn-move-left');
     const rightBtn = document.getElementById('btn-move-right');
     const channelSelect = document.getElementById('setting-channel');
+    
+    // Add delete layout button functionality
+    const deleteLayoutBtn = document.createElement('button');
+    deleteLayoutBtn.className = 'action-btn danger-btn';
+    deleteLayoutBtn.textContent = 'Delete Layout';
+    deleteLayoutBtn.style.marginTop = '12px';
+    deleteLayoutBtn.addEventListener('click', () => {
+        if (layouts.length <= 1) {
+            alert("Cannot delete the last layout.");
+            return;
+        }
+        if (confirm("Are you sure you want to delete this entire layout?")) {
+            layouts = layouts.filter(l => l.id !== activeLayoutId);
+            activeLayoutId = layouts[0].id;
+            saveGridConfig();
+            populateLayoutSelector();
+            setLayout('grid');
+            initGrid();
+            modal.classList.add('hidden');
+        }
+    });
+    document.querySelector('#gauge-settings-modal .form-body').appendChild(deleteLayoutBtn);
     
     // Populate select
     Object.keys(CHANNEL_METADATA).forEach(key => {
@@ -1182,17 +1284,16 @@ function initGaugeSettings() {
     });
     
     saveBtn.addEventListener('click', () => {
+        const layout = getActiveLayout();
         const idx = parseInt(document.getElementById('setting-gauge-index').value);
         const channel = document.getElementById('setting-channel').value;
         const type = document.getElementById('setting-type').value;
         
         if (idx === -1) {
-            // New gauge
-            gridConfig.push({ channel, type });
+            layout.gauges.push({ channel, type });
         } else {
-            // Edit existing
-            gridConfig[idx].channel = channel;
-            gridConfig[idx].type = type;
+            layout.gauges[idx].channel = channel;
+            layout.gauges[idx].type = type;
         }
         
         saveGridConfig();
@@ -1201,9 +1302,10 @@ function initGaugeSettings() {
     });
     
     deleteBtn.addEventListener('click', () => {
+        const layout = getActiveLayout();
         const idx = parseInt(document.getElementById('setting-gauge-index').value);
         if (idx >= 0) {
-            gridConfig.splice(idx, 1);
+            layout.gauges.splice(idx, 1);
             saveGridConfig();
             initGrid();
             modal.classList.add('hidden');
@@ -1211,11 +1313,12 @@ function initGaugeSettings() {
     });
     
     leftBtn.addEventListener('click', () => {
+        const layout = getActiveLayout();
         const idx = parseInt(document.getElementById('setting-gauge-index').value);
         if (idx > 0) {
-            const temp = gridConfig[idx - 1];
-            gridConfig[idx - 1] = gridConfig[idx];
-            gridConfig[idx] = temp;
+            const temp = layout.gauges[idx - 1];
+            layout.gauges[idx - 1] = layout.gauges[idx];
+            layout.gauges[idx] = temp;
             saveGridConfig();
             initGrid();
             document.getElementById('setting-gauge-index').value = idx - 1;
@@ -1223,11 +1326,12 @@ function initGaugeSettings() {
     });
     
     rightBtn.addEventListener('click', () => {
+        const layout = getActiveLayout();
         const idx = parseInt(document.getElementById('setting-gauge-index').value);
-        if (idx >= 0 && idx < gridConfig.length - 1) {
-            const temp = gridConfig[idx + 1];
-            gridConfig[idx + 1] = gridConfig[idx];
-            gridConfig[idx] = temp;
+        if (idx >= 0 && idx < layout.gauges.length - 1) {
+            const temp = layout.gauges[idx + 1];
+            layout.gauges[idx + 1] = layout.gauges[idx];
+            layout.gauges[idx] = temp;
             saveGridConfig();
             initGrid();
             document.getElementById('setting-gauge-index').value = idx + 1;
@@ -1236,16 +1340,17 @@ function initGaugeSettings() {
 }
 
 function openGaugeSettings(index) {
+    const layout = getActiveLayout();
     const modal = document.getElementById('gauge-settings-modal');
     document.getElementById('setting-gauge-index').value = index;
     
     const isNew = index === -1;
     document.getElementById('btn-delete-gauge').style.display = isNew ? 'none' : 'block';
     document.getElementById('btn-move-left').disabled = isNew || index === 0;
-    document.getElementById('btn-move-right').disabled = isNew || index === gridConfig.length - 1;
+    document.getElementById('btn-move-right').disabled = isNew || index === layout.gauges.length - 1;
     
     if (!isNew) {
-        const cfg = gridConfig[index];
+        const cfg = layout.gauges[index];
         document.getElementById('setting-channel').value = cfg.channel;
         document.getElementById('setting-type').value = cfg.type;
     } else {
