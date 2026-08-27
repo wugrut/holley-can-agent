@@ -31,6 +31,7 @@ const state = {
     voiceEnabled: localStorage.getItem('voice_alerts') !== 'false',
     theme: localStorage.getItem('dashboard_theme') || 'dark',
     activeLayout: localStorage.getItem('dashboard_layout') || 'grid',
+    isEditingLayout: false,
     logging: false,
     wakeLock: null,
 };
@@ -850,6 +851,7 @@ function populateLayoutSelector() {
 function initLayout() {
     const sel = document.getElementById('layout-selector');
     const btnDiag = document.getElementById('btn-layout-diag');
+    const btnEdit = document.getElementById('btn-edit-layout');
     
     if (!sel) return;
     
@@ -861,7 +863,16 @@ function initLayout() {
     populateLayoutSelector();
     applyLayout(state.activeLayout);
     
+    if (btnEdit) {
+        btnEdit.addEventListener('click', () => {
+            toggleEditMode();
+        });
+    }
+    
     sel.addEventListener('change', (e) => {
+        if (state.isEditingLayout) {
+            toggleEditMode(false);
+        }
         if (e.target.value === 'add_new') {
             const name = prompt("Enter name for new layout:");
             if (name && name.trim().length > 0) {
@@ -885,8 +896,35 @@ function initLayout() {
     });
     
     btnDiag.addEventListener('click', () => {
+        if (state.isEditingLayout) {
+            toggleEditMode(false);
+        }
         setLayout('diag');
     });
+}
+
+function toggleEditMode(forceState) {
+    state.isEditingLayout = (typeof forceState === 'boolean') ? forceState : !state.isEditingLayout;
+    const btnEdit = document.getElementById('btn-edit-layout');
+    const gridEl = document.getElementById('gauge-grid');
+    
+    if (btnEdit) {
+        if (state.isEditingLayout) {
+            btnEdit.textContent = '✓ DONE';
+            btnEdit.classList.add('active', 'editing-active');
+        } else {
+            btnEdit.textContent = 'EDIT';
+            btnEdit.classList.remove('active', 'editing-active');
+        }
+    }
+    
+    if (gridEl) {
+        if (state.isEditingLayout) {
+            gridEl.classList.add('edit-mode');
+        } else {
+            gridEl.classList.remove('edit-mode');
+        }
+    }
 }
 
 function setLayout(layoutType) {
@@ -989,6 +1027,12 @@ function initGrid() {
     
     gridEl.innerHTML = ''; // Clear
     
+    if (state.isEditingLayout) {
+        gridEl.classList.add('edit-mode');
+    } else {
+        gridEl.classList.remove('edit-mode');
+    }
+    
     const layout = getActiveLayout();
     
     layout.gauges.forEach((cfg, index) => {
@@ -1007,6 +1051,7 @@ function initGrid() {
         html += `<div class="gauge-header">
             <span class="gauge-label">${meta.label}</span>
             ${!isCompact && meta.unit ? `<span class="gauge-unit" id="dyn-unit-${index}">${meta.unit}</span>` : ''}
+            <span class="gauge-drag-handle" title="Drag to rearrange">⠿</span>
         </div>`;
         
         // Body
@@ -1069,8 +1114,9 @@ function initGrid() {
         template.innerHTML = html.trim();
         const node = template.content.firstChild;
         
-        // Attach Long Press Event Listeners
+        // Attach Event Listeners
         attachLongPressEvents(node, index);
+        attachDragAndDropEvents(node, index);
         
         gridEl.appendChild(node);
     });
@@ -1086,9 +1132,11 @@ function initGrid() {
 }
 
 function attachLongPressEvents(node, index) {
-    let pressTimer;
+    let pressTimer = null;
     
     const startPress = (e) => {
+        // Never trigger long press if touching the drag handle or if in edit mode
+        if (state.isEditingLayout || (e.target && e.target.closest('.gauge-drag-handle'))) return;
         node.classList.add('gauge-long-press-active');
         pressTimer = window.setTimeout(() => {
             openGaugeSettings(index);
@@ -1097,9 +1145,14 @@ function attachLongPressEvents(node, index) {
     };
     
     const cancelPress = () => {
-        clearTimeout(pressTimer);
+        if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+        }
         node.classList.remove('gauge-long-press-active');
     };
+    
+    node._cancelLongPress = cancelPress;
     
     node.addEventListener('mousedown', startPress);
     node.addEventListener('touchstart', startPress, {passive: true});
@@ -1109,6 +1162,161 @@ function attachLongPressEvents(node, index) {
     node.addEventListener('touchend', cancelPress);
     node.addEventListener('touchcancel', cancelPress);
     node.addEventListener('touchmove', cancelPress, {passive: true});
+}
+
+function attachDragAndDropEvents(card, index) {
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let offsetX = 0;
+    let offsetY = 0;
+    let startRect = null;
+    let placeholder = null;
+    let pointerId = null;
+    let fromHandle = false;
+
+    const onPointerDown = (e) => {
+        fromHandle = !!(e.target && e.target.closest('.gauge-drag-handle'));
+
+        // Allow drag if in edit mode OR if user grabbed the dedicated drag handle
+        if (!state.isEditingLayout && !fromHandle) return;
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+        // Cancel any pending long press immediately
+        if (card._cancelLongPress) card._cancelLongPress();
+
+        pointerId = e.pointerId;
+        startX = e.clientX;
+        startY = e.clientY;
+        startRect = card.getBoundingClientRect();
+        offsetX = e.clientX - startRect.left;
+        offsetY = e.clientY - startRect.top;
+
+        // Lower movement threshold if grabbed directly by the handle for instant response
+        const threshold = fromHandle ? 2 : 8;
+
+        const onPointerMove = (moveEv) => {
+            if (moveEv.pointerId !== pointerId) return;
+
+            const dx = moveEv.clientX - startX;
+            const dy = moveEv.clientY - startY;
+
+            if (!isDragging && Math.hypot(dx, dy) > threshold) {
+                isDragging = true;
+                if (card._cancelLongPress) card._cancelLongPress();
+
+                try {
+                    card.setPointerCapture(pointerId);
+                } catch (_) {}
+
+                const gridEl = document.getElementById('gauge-grid');
+
+                // Create placeholder
+                placeholder = document.createElement('div');
+                const isArc = card.classList.contains('gauge-rpm');
+                const isCompact = card.classList.contains('gauge-compact');
+                const isTrack = card.classList.contains('track-card');
+                placeholder.className = `gauge-card gauge-drop-placeholder ${isArc ? 'gauge-rpm' : ''} ${isCompact ? 'gauge-compact' : ''} ${isTrack ? 'track-card' : ''}`;
+                placeholder.style.height = `${startRect.height}px`;
+
+                gridEl.insertBefore(placeholder, card.nextSibling);
+
+                // Lift the card
+                card.classList.add('is-dragging');
+                card.style.width = `${startRect.width}px`;
+                card.style.height = `${startRect.height}px`;
+                card.style.left = `${moveEv.clientX - offsetX}px`;
+                card.style.top = `${moveEv.clientY - offsetY}px`;
+
+                if (navigator.vibrate) navigator.vibrate(30);
+            }
+
+            if (isDragging) {
+                moveEv.preventDefault();
+                card.style.left = `${moveEv.clientX - offsetX}px`;
+                card.style.top = `${moveEv.clientY - offsetY}px`;
+
+                // Find drop target card in grid
+                const gridEl = document.getElementById('gauge-grid');
+                const cards = Array.from(gridEl.querySelectorAll('.gauge-card:not(.is-dragging):not(.gauge-drop-placeholder):not(.gauge-card-add)'));
+
+                for (const otherCard of cards) {
+                    const rect = otherCard.getBoundingClientRect();
+                    if (
+                        moveEv.clientX >= rect.left &&
+                        moveEv.clientX <= rect.right &&
+                        moveEv.clientY >= rect.top &&
+                        moveEv.clientY <= rect.bottom
+                    ) {
+                        const midX = rect.left + rect.width / 2;
+                        const isAfter = moveEv.clientX > midX;
+
+                        if (isAfter) {
+                            if (otherCard.nextSibling !== placeholder) {
+                                gridEl.insertBefore(placeholder, otherCard.nextSibling);
+                            }
+                        } else {
+                            if (otherCard !== placeholder) {
+                                gridEl.insertBefore(placeholder, otherCard);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        };
+
+        const onPointerUp = (upEv) => {
+            if (upEv.pointerId !== pointerId) return;
+
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
+
+            if (isDragging) {
+                isDragging = false;
+                try {
+                    card.releasePointerCapture(pointerId);
+                } catch (_) {}
+
+                card.classList.remove('is-dragging');
+                card.style.width = '';
+                card.style.height = '';
+                card.style.left = '';
+                card.style.top = '';
+
+                const gridEl = document.getElementById('gauge-grid');
+                if (placeholder && placeholder.parentNode) {
+                    gridEl.insertBefore(card, placeholder);
+                    placeholder.remove();
+                }
+
+                // Read new order from DOM
+                const currentCards = Array.from(gridEl.querySelectorAll('.gauge-card[data-index]'));
+                const newIndices = currentCards.map(c => parseInt(c.getAttribute('data-index'), 10));
+
+                const layout = getActiveLayout();
+                const originalGauges = [...layout.gauges];
+                layout.gauges = newIndices.map(idx => originalGauges[idx]);
+
+                saveGridConfig();
+                if (navigator.vibrate) navigator.vibrate([20, 30]);
+
+                initGrid();
+            } else {
+                // If it was a quick tap in edit mode on the card body (NOT the handle), open settings
+                if (state.isEditingLayout && !fromHandle) {
+                    openGaugeSettings(index);
+                }
+            }
+        };
+
+        window.addEventListener('pointermove', onPointerMove, { passive: false });
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+    };
+
+    card.addEventListener('pointerdown', onPointerDown);
 }
 
 function renderGrid() {

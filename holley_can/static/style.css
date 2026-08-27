@@ -304,6 +304,85 @@ body {
     50% { opacity: 1; }
 }
 
+/* ── Edit / Drag-and-Drop Mode ────────────────────────────────────────────── */
+#gauge-grid.edit-mode .gauge-card:not(.gauge-card-add) {
+    cursor: grab;
+    touch-action: none;
+    border: 1px dashed rgba(0, 229, 255, 0.5);
+    user-select: none;
+    -webkit-user-select: none;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+#gauge-grid.edit-mode .gauge-card:not(.gauge-card-add):active {
+    cursor: grabbing;
+}
+
+.gauge-drag-handle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    letter-spacing: -2px;
+    color: var(--accent-cyan);
+    opacity: 0.5;
+    margin: -6px -6px -6px auto;
+    padding: 6px 10px;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+
+.gauge-drag-handle:active,
+#gauge-grid.edit-mode .gauge-drag-handle:active {
+    cursor: grabbing;
+    opacity: 1;
+    transform: scale(1.25);
+    color: #ffffff;
+}
+
+#gauge-grid.edit-mode .gauge-drag-handle {
+    opacity: 1;
+    transform: scale(1.15);
+}
+
+.gauge-card.is-dragging {
+    position: fixed !important;
+    z-index: 10000 !important;
+    pointer-events: none !important;
+    opacity: 0.94;
+    transform: scale(1.05);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 25px var(--accent-cyan-dim) !important;
+    border-color: var(--accent-cyan) !important;
+    transition: none !important;
+}
+
+.gauge-drop-placeholder {
+    border: 2px dashed var(--accent-cyan) !important;
+    background: rgba(0, 229, 255, 0.08) !important;
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 20px rgba(0, 229, 255, 0.15);
+    pointer-events: none;
+    min-height: 120px;
+    animation: placeholder-glow 1.5s infinite alternate;
+}
+
+@keyframes placeholder-glow {
+    0% { background: rgba(0, 229, 255, 0.05); border-color: rgba(0, 229, 255, 0.4); }
+    100% { background: rgba(0, 229, 255, 0.12); border-color: rgba(0, 229, 255, 0.9); }
+}
+
+.control-btn.editing-active {
+    background: rgba(0, 229, 255, 0.2) !important;
+    border-color: var(--accent-cyan) !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    box-shadow: 0 0 12px var(--accent-cyan-dim);
+}
+
 .gauge-header {
     display: flex;
     justify-content: space-between;
