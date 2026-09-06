@@ -30,11 +30,15 @@ EFI Intelligence Copilot is **NOT** a replacement for Holley EFI software. It is
 
 - 🏎️ **Standalone Portable Tuning Laptop App**: Single ZIP distribution with zero dependencies; extract and run via 1-click batch files.
 - 🔌 **Hardware Preflight Bus Sniffer**: Tests cable continuity, bus termination ($60\,\Omega$), baud rate (1 Mbps), and decodes live Holley frames before making a run.
+- 💡 **Interactive On-Hover HUD Tooltips**: Glowing cyberpunk popup cards on every button, status indicator, and drag handle explaining exact function and state.
+- 🎛️ **Touchscreen Visual Cluster Designer**: Drag-and-drop tiles to rearrange, customize channels, and switch between Arc, Radial, Bar, Ring, and Track display styles.
+- 💾 **50Hz CAN Telemetry Logger & CSV Exporter**: Record high-precision time-series runs to SQLite and export CSV logs for MegaLogViewer and Excel.
+- 🔊 **Voice Alarms & High-Contrast Themes**: Spoken voice announcements for critical engine thresholds and one-click toggle between Day and Night pit modes.
 - 📊 **Multidimensional Baseline Engine**: Bins engine operation (Cold Idle, Warm Idle, Cruise, Accel, WOT/Boost) and tracks non-parametric robust statistics (Median, IQR, 5th/95th percentiles).
 - ⚡ **Deterministic Event Detector**: High-speed state machine tracking engine start/stop, WOT pulls, idle hunting, thermal heat soak, and voltage sags.
 - 🩺 **Rule-Based Diagnostic Engine**: Detects high-load fueling deviations (lean VE drift), hunting idle AFR oscillations, sensor dropouts, and thermal overheat.
 - 📄 **Offline Health Reports**: Automatically compiles styled HTML and Markdown intelligence reports with domain health scores (Fueling, Idle, Sensors, Thermal, Electrical).
-- 🌐 **Real-Time Web Dashboard**: SVG/Canvas circular gauges, live WebSocket telemetry push (20 Hz), and real-time alert banners.
+- 🌐 **Real-Time Web Dashboard**: SVG/Canvas circular gauges, live WebSocket telemetry push (20–50 Hz), and real-time alert banners.
 - 🎮 **10-Scenario Virtual Simulator**: In-memory ECU telemetry generator for testing cold starts, WOT pulls, sensor failures, and heat soak indoors.
 
 ---
@@ -84,6 +88,25 @@ For tuning laptops running Windows 10/11 without Python installed:
 | `4_PREFLIGHT_HARDWARE_CHECK.bat` | Sniffs the bus for 15s to verify $60\,\Omega$ termination and decode live Holley packets. |
 | `5_RUN_WEB_DASHBOARD.bat` | Starts the local web server and opens the browser gauge cluster (`http://localhost:8420`). |
 | `FIELD_GUIDE.md` | Complete printable offline field wiring and troubleshooting manual. |
+
+---
+
+## 🎛️ Live Dashboard Controls & Interactive HUD Tooltips
+
+The live telemetry dashboard (`http://localhost:8420`) features interactive on-hover HUD cards for all buttons, toggles, and status indicators:
+
+| Button / Control | Icon / State | Function & On-Hover Popup |
+|:---|:---|:---|
+| **Layout Selector** | `LAYOUT: [GRID ▾]` | Switch between preset gauge configurations: **Grid**, **Track**, and custom user layouts. |
+| **Edit Layout** | `EDIT` / `✓ DONE` | Enter touchscreen designer mode to drag-and-drop tiles, reorder gauges, or add new channels. |
+| **Diagnostic View** | `DIAG` | Toggle high-density tabular view displaying all raw decoded CAN broadcast channels in real-time. |
+| **Data Logger** | `REC` / `STOP` | Start or stop recording high-resolution 50Hz time-series data to SQLite with one click. |
+| **Session Logs** | `LOGS` | Open the run history modal to view past logging runs and download CSV files for MegaLogViewer. |
+| **Day / Night Theme** | `☀️` / `🌙` | Toggle between high-contrast daylight theme and dark pit mode. |
+| **Voice Alarms** | `🔊` / `🔇` | Enable or mute synthesized spoken voice announcements for critical engine alarm thresholds. |
+| **Alarm Banner** | `✕` | Dismiss active warning or critical engine alarm notifications. |
+| **Drag Handle** | `⠿` | Grab to reorder and reposition gauge tiles across the cluster. |
+| **Add Custom Gauge** | `+` | Add new tiles for Oil Pressure, Fuel Pressure, Boost, Target AFR, etc. |
 
 ---
 
