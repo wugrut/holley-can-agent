@@ -355,6 +355,7 @@ async def main():
         listener=listener,
         storage=storage,
         broadcaster=broadcaster,
+        alert_engine=alert_engine,
         cors_origins=api_cfg.get("cors_origins", ["*"]),
     )
 

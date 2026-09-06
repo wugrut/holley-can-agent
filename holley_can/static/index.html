@@ -71,6 +71,9 @@
         </div>
         
         <div class="control-group right-align">
+            <button id="btn-copilot-toggle" class="control-btn copilot-btn"
+                    data-tooltip-title="AI COPILOT (ASK ENGINE)"
+                    data-tooltip-desc="Open the live telemetry-grounded AI decision-support assistant to diagnose idle, fueling, boost, or faults.">🤖 COPILOT</button>
             <button id="btn-theme-toggle" class="control-btn circle-btn" aria-label="Toggle Day/Night Mode"
                     data-tooltip-title="DAY / NIGHT THEME"
                     data-tooltip-desc="Toggle between high-contrast daylight theme and dark pit mode.">🌓</button>
@@ -207,6 +210,73 @@
         </div>
     </div>
 
+    <!-- AI Copilot Side Drawer ("Ask Your Engine") -->
+    <div id="copilot-backdrop" class="copilot-backdrop hidden"></div>
+    <aside id="copilot-drawer" class="copilot-drawer hidden" aria-label="EFI Intelligence Copilot">
+        <div class="copilot-header">
+            <div class="copilot-header-title">
+                <span class="copilot-badge">AI COPILOT</span>
+                <h3>Ask Your Engine</h3>
+            </div>
+            <button id="copilot-close" class="copilot-close-btn"
+                    data-tooltip-title="CLOSE COPILOT"
+                    data-tooltip-desc="Close the AI assistant panel.">✕</button>
+        </div>
+
+        <!-- Live Telemetry Snapshot Strip -->
+        <div id="copilot-context-bar" class="copilot-context-bar">
+            <div class="context-item"><span class="context-label">RPM:</span> <span id="copilot-ctx-rpm" class="context-val">—</span></div>
+            <div class="context-item"><span class="context-label">AFR:</span> <span id="copilot-ctx-afr" class="context-val">—</span></div>
+            <div class="context-item"><span class="context-label">MAP:</span> <span id="copilot-ctx-map" class="context-val">—</span></div>
+            <div class="context-item"><span class="context-label">LEARN:</span> <span id="copilot-ctx-learn" class="context-val">—</span></div>
+            <div class="context-item"><span class="context-label">CLT:</span> <span id="copilot-ctx-clt" class="context-val">—</span></div>
+        </div>
+
+        <!-- Quick Suggested Diagnostic Chips -->
+        <div class="copilot-chips-header">QUICK DIAGNOSTIC PROMPTS</div>
+        <div class="copilot-chips" id="copilot-chips">
+            <button type="button" class="copilot-chip" data-query="Why is my idle hunting or surging?">🔍 Idle Stability</button>
+            <button type="button" class="copilot-chip" data-query="Analyze fuel learn and closed-loop trims">⛽ Fuel Learn</button>
+            <button type="button" class="copilot-chip" data-query="Check boost and air-fuel ratio safety margin">📈 Boost & AFR</button>
+            <button type="button" class="copilot-chip" data-query="Are there any active warnings or faults?">🚨 Active Alarms</button>
+            <button type="button" class="copilot-chip" data-query="Check electrical and alternator charging voltage">🔋 Battery</button>
+            <button type="button" class="copilot-chip" data-query="Summarize current engine health">📋 Health Brief</button>
+        </div>
+
+        <!-- Chat History Area -->
+        <div id="copilot-messages" class="copilot-messages">
+            <div class="copilot-msg assistant">
+                <div class="msg-author">
+                    <span class="author-icon">⚡</span>
+                    <span class="author-name">EFI INTELLIGENCE COPILOT</span>
+                    <span class="author-time">LIVE</span>
+                </div>
+                <div class="msg-content">
+                    <p>Welcome! I'm your real-time diagnostic copilot connected directly to your Terminator X MAX CAN bus.</p>
+                    <p>I analyze live sensor streams, learn tables, ignition timing, and safety thresholds to explain what your engine data means and recommend next steps.</p>
+                    <p>Click any diagnostic prompt above or ask a custom question below!</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Query Input Form -->
+        <form id="copilot-form" class="copilot-form">
+            <div class="copilot-input-wrapper">
+                <input type="text" id="copilot-input" class="copilot-input" placeholder="Ask your engine anything (e.g. 'Is my AFR safe under boost?')..." autocomplete="off">
+                <button type="submit" id="copilot-submit" class="copilot-submit-btn"
+                        data-tooltip-title="SEND QUERY"
+                        data-tooltip-desc="Send question to EFI Intelligence Copilot.">
+                    <span>ASK</span>
+                    <span class="submit-arrow">➤</span>
+                </button>
+            </div>
+            <div class="copilot-footer-note">
+                <span class="safety-indicator">🛡️ Passive Read-Only</span>
+                <span>Empirical CAN Telemetry Grounded</span>
+            </div>
+        </form>
+    </aside>
+
     <!-- Footer Stats -->
     <footer id="footer-stats">
         <span id="stat-frames" data-tooltip-title="CAN FRAMES" data-tooltip-desc="Total 29-bit extended CAN packets received from Terminator X Max.">Frames: 0</span>
@@ -225,6 +295,6 @@
         <div class="tooltip-hint"></div>
     </div>
 
-    <script src="/static/dashboard.js?v=2.2"></script>
+    <script src="/static/dashboard.js?v=2.3"></script>
 </body>
 </html>

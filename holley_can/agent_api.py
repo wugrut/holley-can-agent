@@ -24,7 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .alerts import Alert
+from .alerts import Alert, AlertEngine
+from .copilot_service import CopilotService
 from .listener import CANListener
 from .protocol import DecodedFrame
 from .storage import TimeSeriesStorage
@@ -121,6 +122,7 @@ def create_app(
     listener: CANListener,
     storage: TimeSeriesStorage,
     broadcaster: DashboardBroadcaster,
+    alert_engine: Optional[AlertEngine] = None,
     cors_origins: list[str] | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
@@ -306,6 +308,40 @@ def create_app(
             "Content-Disposition": f"attachment; filename=holley_session_{session_id}.csv"
         }
         return StreamingResponse(generate_csv(), media_type="text/csv", headers=headers)
+
+    # ── AI Copilot ("Ask Your Engine") ──────────────────────────────────
+
+    copilot_service = CopilotService()
+
+    @app.post("/api/copilot/ask")
+    async def copilot_ask(payload: dict):
+        """Processes conversational queries grounded in live ECU telemetry."""
+        question = payload.get("question", "").strip()
+        if not question:
+            return {"error": "Question cannot be empty."}
+
+        snapshot = listener.get_live_snapshot()
+        active_alerts = alert_engine.get_active_alerts() if alert_engine else []
+        return copilot_service.ask(
+            question=question,
+            snapshot=snapshot,
+            active_alerts=active_alerts,
+            stats=listener.stats,
+        )
+
+    @app.get("/api/copilot/suggestions")
+    async def copilot_suggestions():
+        """Returns recommended questions for quick chip prompts."""
+        return {
+            "suggestions": [
+                "Why is my idle hunting or surging?",
+                "Analyze fuel learn and closed-loop trims",
+                "Check boost and air-fuel ratio safety margin",
+                "Are there any active warnings or faults?",
+                "Check electrical and alternator charging voltage",
+                "Summarize current engine health",
+            ]
+        }
 
     # ── WebSocket ───────────────────────────────────────────────────────
 

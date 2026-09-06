@@ -806,6 +806,247 @@ function renderSessionsList(sessions) {
     listEl.innerHTML = html || '<tr><td colspan="4" style="text-align:center;">No sessions recorded yet.</td></tr>';
 }
 
+// ─── AI Copilot Drawer ("Ask Your Engine") ──────────────────────────────────
+
+function formatMarkdown(text) {
+    if (!text) return '';
+    let html = text
+        // Headers
+        .replace(/^#### (.*$)/gim, '<h4>$1</h4>')
+        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+        // Bold
+        .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
+        // Inline code
+        .replace(/`([^`]+)`/gim, '<code>$1</code>');
+
+    // Tables
+    const tableRegex = /((?:\|[^\n]+\|\r?\n)+)/g;
+    html = html.replace(tableRegex, (match) => {
+        const rows = match.trim().split(/\r?\n/).filter(r => r.includes('|'));
+        if (rows.length < 2) return match;
+        let tableHtml = '<table>';
+        rows.forEach((row, idx) => {
+            if (row.includes('---')) return; // separator row
+            const cells = row.split('|').slice(1, -1).map(c => c.trim());
+            const tag = idx === 0 ? 'th' : 'td';
+            tableHtml += '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
+        });
+        tableHtml += '</table>';
+        return tableHtml;
+    });
+
+    // Lists
+    html = html.replace(/^\s*-\s+(.*$)/gim, '<li>$1</li>');
+    html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+
+    // Paragraphs
+    const lines = html.split(/\n\n+/);
+    html = lines.map(p => {
+        p = p.trim();
+        if (!p) return '';
+        if (p.startsWith('<h') || p.startsWith('<table') || p.startsWith('<ul')) return p;
+        return `<p>${p}</p>`;
+    }).join('');
+
+    return html;
+}
+
+function initCopilot() {
+    const toggleBtn = document.getElementById('btn-copilot-toggle');
+    const drawer = document.getElementById('copilot-drawer');
+    const backdrop = document.getElementById('copilot-backdrop');
+    const closeBtn = document.getElementById('copilot-close');
+    const form = document.getElementById('copilot-form');
+    const input = document.getElementById('copilot-input');
+    const submitBtn = document.getElementById('copilot-submit');
+    const messagesEl = document.getElementById('copilot-messages');
+    const chipsEl = document.getElementById('copilot-chips');
+
+    if (!toggleBtn || !drawer) return;
+
+    function openDrawer() {
+        drawer.classList.remove('hidden');
+        if (backdrop) backdrop.classList.remove('hidden');
+        toggleBtn.classList.add('active');
+        updateContextStrip();
+        if (input) input.focus();
+    }
+
+    function closeDrawer() {
+        drawer.classList.add('hidden');
+        if (backdrop) backdrop.classList.add('hidden');
+        toggleBtn.classList.remove('active');
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        if (drawer.classList.contains('hidden')) {
+            openDrawer();
+        } else {
+            closeDrawer();
+        }
+    });
+
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    if (backdrop) backdrop.addEventListener('click', closeDrawer);
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !drawer.classList.contains('hidden')) {
+            closeDrawer();
+        }
+    });
+
+    // Update Context Strip with live numbers
+    function updateContextStrip() {
+        const rpm = getChannelValue('rpm');
+        const afr = getChannelValue('afr_avg');
+        const mapKpa = getChannelValue('map_kpa');
+        const learn = getChannelValue('current_learn');
+        const clt = getChannelValue('coolant_temp');
+
+        const rpmEl = document.getElementById('copilot-ctx-rpm');
+        const afrEl = document.getElementById('copilot-ctx-afr');
+        const mapEl = document.getElementById('copilot-ctx-map');
+        const learnEl = document.getElementById('copilot-ctx-learn');
+        const cltEl = document.getElementById('copilot-ctx-clt');
+
+        if (rpmEl) rpmEl.textContent = rpm ? Math.round(rpm) : '—';
+        if (afrEl) afrEl.textContent = afr ? afr.toFixed(2) : '—';
+        if (mapEl) mapEl.textContent = mapKpa ? mapKpa.toFixed(1) + ' kPa' : '—';
+        if (learnEl) learnEl.textContent = learn !== undefined ? `${learn > 0 ? '+' : ''}${learn.toFixed(1)}%` : '—';
+        if (cltEl) cltEl.textContent = clt ? Math.round(clt) + '°F' : '—';
+    }
+
+    // Refresh context strip every second while drawer is open
+    setInterval(() => {
+        if (drawer && !drawer.classList.contains('hidden')) {
+            updateContextStrip();
+        }
+    }, 1000);
+
+    // Quick Chips click handler
+    if (chipsEl) {
+        chipsEl.addEventListener('click', (e) => {
+            const chip = e.target.closest('.copilot-chip');
+            if (!chip) return;
+            const query = chip.getAttribute('data-query');
+            if (query) {
+                if (input) input.value = query;
+                askQuestion(query);
+            }
+        });
+    }
+
+    // Form submit handler
+    if (form) {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const q = input.value.trim();
+            if (!q) return;
+            askQuestion(q);
+        });
+    }
+
+    async function askQuestion(question) {
+        if (!question || !messagesEl) return;
+
+        // 1. Add User Message
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        const userMsg = document.createElement('div');
+        userMsg.className = 'copilot-msg user';
+        userMsg.innerHTML = `
+            <div class="msg-author">
+                <span class="author-name">YOU</span>
+                <span class="author-time">${timeStr}</span>
+            </div>
+            <div class="msg-content">${escapeHtml(question)}</div>
+        `;
+        messagesEl.appendChild(userMsg);
+
+        // 2. Clear input & disable button
+        if (input) input.value = '';
+        if (submitBtn) submitBtn.disabled = true;
+
+        // 3. Add Thinking Message
+        const thinkingMsg = document.createElement('div');
+        thinkingMsg.className = 'copilot-msg assistant thinking-msg';
+        thinkingMsg.innerHTML = `
+            <div class="msg-author">
+                <span class="author-icon">⚡</span>
+                <span class="author-name">EFI INTELLIGENCE COPILOT</span>
+                <span class="author-time">ANALYZING...</span>
+            </div>
+            <div class="msg-content" style="color: var(--accent-cyan); font-style: italic;">
+                Analyzing live CAN broadcast channels and diagnostic baselines...
+            </div>
+        `;
+        messagesEl.appendChild(thinkingMsg);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        // 4. Fetch Response from API
+        try {
+            const res = await fetch('/api/copilot/ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question }),
+            });
+            const data = await res.json();
+            thinkingMsg.remove();
+
+            const answerMsg = document.createElement('div');
+            answerMsg.className = 'copilot-msg assistant';
+            answerMsg.innerHTML = `
+                <div class="msg-author">
+                    <span class="author-icon">⚡</span>
+                    <span class="author-name">EFI INTELLIGENCE COPILOT</span>
+                    <span class="author-time">${timeStr}</span>
+                </div>
+                <div class="msg-content">${formatMarkdown(data.answer || data.error || 'No telemetry analysis available.')}</div>
+            `;
+            messagesEl.appendChild(answerMsg);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+            // Optional Voice synthesis if voice alerts enabled
+            if (state.voiceEnabled && window.speechSynthesis && data.telemetry) {
+                const verbalText = `Engine at ${data.telemetry.rpm} RPM. AFR is ${data.telemetry.afr}. ${data.telemetry.active_alerts > 0 ? data.telemetry.active_alerts + ' active alarms' : 'All systems normal'}.`;
+                const utterance = new SpeechSynthesisUtterance(verbalText);
+                utterance.rate = 1.05;
+                window.speechSynthesis.speak(utterance);
+            }
+        } catch (err) {
+            thinkingMsg.remove();
+            const errorMsg = document.createElement('div');
+            errorMsg.className = 'copilot-msg assistant';
+            errorMsg.innerHTML = `
+                <div class="msg-author">
+                    <span class="author-icon">⚠</span>
+                    <span class="author-name">COPILOT ERROR</span>
+                    <span class="author-time">${timeStr}</span>
+                </div>
+                <div class="msg-content" style="color: var(--accent-red);">
+                    Failed to reach Copilot diagnostic service: ${escapeHtml(err.message)}
+                </div>
+            `;
+            messagesEl.appendChild(errorMsg);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
+        }
+    }
+
+    function escapeHtml(str) {
+        return str.replace(/[&<>'"]/g, tag => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            "'": '&#39;',
+            '"': '&quot;'
+        }[tag] || tag));
+    }
+}
+
 // ─── Theme Management ────────────────────────────────────────────────────────
 
 function initTheme() {
@@ -1141,6 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initLayout();
     initVoiceToggle();
     initLogger();
+    initCopilot();
     initTooltips();
 });
 
