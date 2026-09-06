@@ -38,6 +38,9 @@ reports/*
 .DS_Store
 Thumbs.db
 
+# Scratch artifacts
+scratch/
+
 # Pytest
 .pytest_cache/
 htmlcov/

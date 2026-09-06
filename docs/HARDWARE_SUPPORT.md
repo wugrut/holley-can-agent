@@ -10,6 +10,7 @@
 
 | Adapter Family | Bus / Transport | Driver / Backend | Supported Platforms | Compatibility Status |
 |----------------|-----------------|------------------|---------------------|----------------------|
+| **Official Holley USB-to-CAN Cable (558-443)** | USB 2.0 | `app.hardware.holley_usbcan` (WinUSB) | Windows | `IMPLEMENTED` / `VERIFIED` |
 | **Virtual Telemetry Simulator** | Memory / In-Process | `app.hardware.simulator` | All (Win/Linux/macOS) | `IMPLEMENTED` / `VERIFIED` |
 | **PEAK-System PCAN-USB / Pro** | USB 2.0 | `python-can` (`pcan`) / SocketCAN | Windows, Linux | `VERIFIED` (SocketCAN tested) |
 | **CANable / candleLight** | USB 2.0 (CDC/WinUSB) | `gs_usb` / SocketCAN / `slcan` | Windows, Linux | `VERIFIED` (candleLight firmware) |

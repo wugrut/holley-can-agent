@@ -109,15 +109,29 @@ async def run_preflight(
     print(f"\n[2/3] Connecting to Target Interface: {interface} on {channel} at {bitrate:,} bps...")
     print("       (Operating in Passive Listen-Only Mode — zero write transmissions)")
 
-    adapter = UsbCanAdapter(interface=interface, channel=channel, bitrate=bitrate)
+    if interface in ("holley", "holley_usbcan"):
+        from app.hardware.holley_usbcan import HolleyUsbCanAdapter
+        adapter = HolleyUsbCanAdapter(channel=channel, bitrate=bitrate)
+    else:
+        adapter = UsbCanAdapter(interface=interface, channel=channel, bitrate=bitrate)
+
     connected = await adapter.connect()
     if not connected:
+        status = adapter.get_status()
+        err_msg = status.error_message or "Unknown connection failure"
         print(f"\n❌ FAILED TO CONNECT to {interface} on {channel}!")
+        print(f"   Error: {err_msg}")
         print("\n🔧 TROUBLESHOOTING CHECKLIST:")
-        print("  1. Driver check: If using Peak PCAN-USB, install PCAN-Basic driver from PEAK-System.")
-        print("  2. COM Port check: If using CANable, check Windows Device Manager -> Ports (COM & LPT).")
-        print("     Specify the exact COM port (e.g. --channel COM3).")
-        print("  3. Cable check: Ensure USB cable is firmly connected directly to laptop (avoid unpowered hubs).")
+        if interface in ("holley", "holley_usbcan"):
+            print("  1. Cable Check: Verify your Holley USB-to-CAN cable is plugged securely into the laptop.")
+            print("  2. Driver Check: Ensure 'Holley USBCAN Driver (WinUSB)' is installed.")
+            print("  3. Exclusive Access Check: Close Holley Terminator X / EFI software if it is currently open.")
+            print("     (Windows WinUSB does not allow two applications to access the cable simultaneously).")
+        else:
+            print("  1. Driver check: If using Peak PCAN-USB, install PCAN-Basic driver from PEAK-System.")
+            print("  2. COM Port check: If using CANable, check Windows Device Manager -> Ports (COM & LPT).")
+            print("     Specify the exact COM port (e.g. --channel COM3).")
+            print("  3. Cable check: Ensure USB cable is firmly connected directly to laptop (avoid unpowered hubs).")
         return
 
     print("   ✓ Connection established. Listening for 29-bit Holley broadcast frames...")
@@ -276,13 +290,19 @@ async def run_copilot_session(
             scenario = SimulationScenario.MULTI_CYCLE
         logger.info("Using VirtualSimulatorAdapter with scenario: %s", scenario.value)
         adapter = VirtualSimulatorAdapter(scenario=scenario, broadcast_hz=20.0)
+    elif interface in ("holley", "holley_usbcan"):
+        from app.hardware.holley_usbcan import HolleyUsbCanAdapter
+        logger.info("Connecting to Holley USB-to-CAN Cable (WinUSB) at %d bps...", bitrate)
+        adapter = HolleyUsbCanAdapter(channel=channel, bitrate=bitrate)
     else:
         logger.info("Connecting to physical CAN transport: %s on %s at %d bps...", interface, channel, bitrate)
         adapter = UsbCanAdapter(interface=interface, channel=channel, bitrate=bitrate)
 
     connected = await adapter.connect()
     if not connected:
-        logger.error("Could not connect to CAN interface %s (%s). Aborting session.", interface, channel)
+        err = adapter.get_status().error_message or "Connection failed"
+        logger.error("Could not connect to CAN interface %s (%s): %s. Aborting session.", interface, channel, err)
+        print(f"\n❌ FAILED TO CONNECT to {interface} on {channel}: {err}")
         return
 
     # Start Session
@@ -474,6 +494,23 @@ def run_dashboard(
     alert_engine = AlertEngine(config=alert_config)
     broadcaster = DashboardBroadcaster(update_rate_ms=dash_cfg.get("update_rate_ms", 50))
 
+    # Wire up subscribers
+    listener.subscribe(storage.on_frame)
+    listener.subscribe(alert_engine.on_frame)
+    listener.subscribe(broadcaster.on_frame)
+
+    alert_engine.on_alert(
+        lambda alert: storage.log_alert(
+            severity=alert.severity.value,
+            alert_type=alert.alert_type,
+            channel=alert.channel,
+            message=alert.message,
+            value=alert.value,
+            threshold=alert.threshold,
+        )
+    )
+    alert_engine.on_alert(broadcaster.on_alert)
+
     app = create_app(
         listener=listener,
         storage=storage,
@@ -507,8 +544,8 @@ def main() -> None:
 
     # Subcommand: copilot
     copilot_p = subparsers.add_parser("copilot", help="Record session, learn baselines, and generate report")
-    copilot_p.add_argument("--interface", type=str, default=None, help="CAN interface (pcan, slcan, socketcan, simulator)")
-    copilot_p.add_argument("--channel", type=str, default=None, help="Channel name or COM port (e.g. PCAN_USBBUS1, COM3, can0)")
+    copilot_p.add_argument("--interface", type=str, default=None, help="CAN interface (holley, pcan, slcan, socketcan, simulator)")
+    copilot_p.add_argument("--channel", type=str, default=None, help="Channel name or COM port (e.g. HOLLEY_USBCAN_0, PCAN_USBBUS1, COM3, can0)")
     copilot_p.add_argument("--bitrate", type=int, default=1_000_000, help="Bitrate in bps (default: 1000000)")
     copilot_p.add_argument("--scenario", type=str, default="wot_pull_lean_dev", help="Simulation scenario if using simulator")
     copilot_p.add_argument("--duration", type=float, default=12.0, help="Duration in seconds (0 for infinite until Ctrl+C)")
@@ -518,14 +555,14 @@ def main() -> None:
 
     # Subcommand: preflight
     preflight_p = subparsers.add_parser("preflight", help="Bus sniffer & connection tester for tuning laptop")
-    preflight_p.add_argument("--interface", type=str, default="pcan", help="CAN interface (pcan, slcan, socketcan)")
-    preflight_p.add_argument("--channel", type=str, default="PCAN_USBBUS1", help="Channel name or COM port (e.g. PCAN_USBBUS1, COM3)")
+    preflight_p.add_argument("--interface", type=str, default="holley", help="CAN interface (holley, pcan, slcan, socketcan)")
+    preflight_p.add_argument("--channel", type=str, default=None, help="Channel name or COM port (e.g. HOLLEY_USBCAN_0, PCAN_USBBUS1, COM3)")
     preflight_p.add_argument("--bitrate", type=int, default=1_000_000, help="Bitrate in bps (default: 1000000)")
     preflight_p.add_argument("--seconds", type=float, default=12.0, help="Sniff duration in seconds")
 
     # Subcommand: dashboard
     dash_p = subparsers.add_parser("dashboard", help="Start real-time web dashboard and open browser")
-    dash_p.add_argument("--interface", type=str, default=None, help="CAN interface (pcan, slcan, simulator)")
+    dash_p.add_argument("--interface", type=str, default=None, help="CAN interface (holley, pcan, slcan, simulator)")
     dash_p.add_argument("--channel", type=str, default=None, help="Channel name or COM port")
     dash_p.add_argument("--bitrate", type=int, default=1_000_000, help="Bitrate in bps")
     dash_p.add_argument("--port", type=int, default=8420, help="HTTP server port (default: 8420)")
@@ -546,9 +583,18 @@ def main() -> None:
     # Default to 'copilot' if no subcommand provided
     command = args.command or "copilot"
 
+    def default_channel_for_interface(iface: str) -> str:
+        if iface in ("holley", "holley_usbcan"):
+            return "HOLLEY_USBCAN_0"
+        elif iface in ("simulator", "virtual"):
+            return "sim_virtual0"
+        elif iface == "pcan":
+            return "PCAN_USBBUS1"
+        return "can0"
+
     if command == "preflight":
-        iface = args.interface or can_cfg.get("interface", "pcan")
-        chan = args.channel or can_cfg.get("channel", "PCAN_USBBUS1")
+        iface = args.interface or can_cfg.get("interface", "holley")
+        chan = args.channel or can_cfg.get("channel") or default_channel_for_interface(iface)
         br = args.bitrate or can_cfg.get("bitrate", 1_000_000)
         asyncio.run(run_preflight(interface=iface, channel=chan, bitrate=br, sniff_seconds=args.seconds))
 
@@ -557,8 +603,8 @@ def main() -> None:
         arg_chan = getattr(args, "channel", None)
         arg_br = getattr(args, "bitrate", None)
         is_sim = command == "simulator" or (arg_iface in ("simulator", "virtual"))
-        iface = "simulator" if is_sim else (arg_iface or can_cfg.get("interface", "pcan"))
-        chan = "sim_virtual0" if is_sim else (arg_chan or can_cfg.get("channel", "PCAN_USBBUS1"))
+        iface = "simulator" if is_sim else (arg_iface or can_cfg.get("interface", "holley"))
+        chan = "sim_virtual0" if is_sim else (arg_chan or can_cfg.get("channel") or default_channel_for_interface(iface))
         br = arg_br or can_cfg.get("bitrate", 1_000_000)
         scenario = getattr(args, "scenario", "wot_pull_lean_dev")
         dur = getattr(args, "duration", 10.0)
@@ -578,7 +624,7 @@ def main() -> None:
 
     elif command == "dashboard":
         iface = args.interface or can_cfg.get("interface", "simulator")
-        chan = args.channel or can_cfg.get("channel", "PCAN_USBBUS1")
+        chan = args.channel or can_cfg.get("channel") or default_channel_for_interface(iface)
         br = args.bitrate or can_cfg.get("bitrate", 1_000_000)
         port = args.port or config.get("api", {}).get("port", 8420)
         run_dashboard(

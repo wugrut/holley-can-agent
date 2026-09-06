@@ -83,7 +83,9 @@ For tuning laptops running Windows 10/11 without Python installed:
 | Launcher Script | Purpose |
 |:---|:---|
 | `1_RUN_SIMULATOR_DEMO.bat` | Tests the app indoors without connecting to the car (generates sample report). |
-| `2_RUN_LIVE_PCAN.bat` | Connects to PEAK PCAN-USB (`PCAN_USBBUS1`) at 1 Mbps in listen-only mode. |
+| `2_RUN_LIVE_HOLLEY_USB.bat` | ⭐ **PREFERRED:** Connects natively to official Holley USB-to-CAN Cable (Part 558-443) via WinUSB at 1 Mbps. |
+| `2_RUN_LIVE_HOLLEY_CABLE.bat` | Convenience alias for official Holley USB-CAN cable. |
+| `2_RUN_LIVE_PCAN.bat` | (Optional Dev/Bench) Connects to PEAK PCAN-USB (`PCAN_USBBUS1`) in listen-only mode. |
 | `3_RUN_LIVE_CANABLE_SLCAN.bat` | Prompts for Windows COM port and connects to CANable in SLCAN mode. |
 | `4_PREFLIGHT_HARDWARE_CHECK.bat` | Sniffs the bus for 15s to verify $60\,\Omega$ termination and decode live Holley packets. |
 | `5_RUN_WEB_DASHBOARD.bat` | Starts the local web server and opens the browser gauge cluster (`http://localhost:8420`). |

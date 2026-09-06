@@ -48,11 +48,14 @@ logger = logging.getLogger("efi-copilot")
 
 
 async def run_copilot(
-    use_simulator: bool = True,
+    use_simulator: bool = False,
     scenario_name: str = "multi_cycle",
     duration_s: float = 10.0,
     db_path: str = "./data/copilot_sessions.db",
     vehicle_name: str = "Holley Terminator X MAX Vehicle",
+    interface: str = "holley",
+    channel: str = "HOLLEY_USBCAN_0",
+    bitrate: int = 1_000_000,
 ) -> None:
     """Orchestrates an EFI Intelligence Copilot recording and analytical run."""
     logger.info("Initializing EFI Intelligence Copilot...")
@@ -75,17 +78,22 @@ async def run_copilot(
     report_gen = ReportGenerator(profile)
 
     # 4. Initialize Hardware Interface
-    if use_simulator:
+    if use_simulator or interface in ("simulator", "virtual"):
         scenario = SimulationScenario(scenario_name)
         logger.info("Using VirtualSimulatorAdapter with scenario: %s", scenario.value)
         adapter = VirtualSimulatorAdapter(scenario=scenario, broadcast_hz=20.0)
+    elif interface in ("holley", "holley_usbcan"):
+        from app.hardware.holley_usbcan import HolleyUsbCanAdapter
+        logger.info("Using HolleyUsbCanAdapter (WinUSB) at %d bps...", bitrate)
+        adapter = HolleyUsbCanAdapter(bitrate=bitrate, channel=channel)
     else:
-        logger.info("Using UsbCanAdapter (passive listen-only mode)...")
-        adapter = UsbCanAdapter(channel="PCAN_USBBUS1")
+        logger.info("Using UsbCanAdapter (interface=%s, channel=%s)...", interface, channel)
+        adapter = UsbCanAdapter(interface=interface, channel=channel, bitrate=bitrate)
 
     connected = await adapter.connect()
     if not connected:
-        logger.error("Failed to connect to hardware transport.")
+        err = adapter.get_status().error_message or "Failed to connect to hardware transport."
+        logger.error("Connection failed: %s", err)
         return
 
     # Start Session
@@ -177,7 +185,10 @@ async def run_copilot(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="EFI Intelligence Copilot")
-    parser.add_argument("--simulator", action="store_true", default=True, help="Use virtual simulator")
+    parser.add_argument("--simulator", action="store_true", default=False, help="Use virtual simulator")
+    parser.add_argument("--interface", type=str, default="holley", help="CAN interface (holley, pcan, slcan, socketcan)")
+    parser.add_argument("--channel", type=str, default="HOLLEY_USBCAN_0", help="CAN channel")
+    parser.add_argument("--bitrate", type=int, default=1_000_000, help="Bitrate in bps")
     parser.add_argument("--scenario", type=str, default="wot_pull_lean_dev", help="Simulator scenario name")
     parser.add_argument("--duration", type=float, default=6.0, help="Run duration in seconds")
     parser.add_argument("--db", type=str, default="./data/copilot_sessions.db", help="SQLite database path")
@@ -189,6 +200,9 @@ def main() -> None:
             scenario_name=args.scenario,
             duration_s=args.duration,
             db_path=args.db,
+            interface=args.interface,
+            channel=args.channel,
+            bitrate=args.bitrate,
         )
     )
 

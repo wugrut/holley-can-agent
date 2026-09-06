@@ -125,12 +125,28 @@ def create_app(
     alert_engine: Optional[AlertEngine] = None,
     cors_origins: list[str] | None = None,
 ) -> FastAPI:
-    """Create and configure the FastAPI application."""
+    @asynccontextmanager
+    async def lifespan(app_instance: FastAPI):
+        await storage.initialize()
+        if not getattr(listener, "_running", False):
+            try:
+                await listener.start()
+            except Exception as e:
+                logger.warning(
+                    "Could not auto-start CAN listener on boot: %s. Use /api/hardware/reconnect once hardware is connected.", e
+                )
+        yield
+        if getattr(listener, "_running", False):
+            try:
+                await listener.stop()
+            except Exception:
+                pass
 
     app = FastAPI(
         title="Holley CAN Agent",
         description="Agentic ECU monitoring interface for the Holley Terminator X Max",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     # CORS for local network access

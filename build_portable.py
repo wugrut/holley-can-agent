@@ -62,6 +62,7 @@ def build():
         f"--add-data={fixtures_data}",
         f"--add-data={csv_data}",
         # CAN Backends
+        "--hidden-import=app.hardware.holley_usbcan",
         "--hidden-import=can.interfaces.pcan",
         "--hidden-import=can.interfaces.slcan",
         "--hidden-import=can.interfaces.virtual",
@@ -113,9 +114,12 @@ def build():
     shutil.copy2(BASE_DIR / "config.portable.yaml", TARGET_DIR / "config.yaml")
     print("   + Included Configuration: config.yaml")
 
-    # Copy Field Guide
-    shutil.copy2(BASE_DIR / "docs" / "FIELD_GUIDE_TUNING_LAPTOP.md", TARGET_DIR / "FIELD_GUIDE.md")
+    # Copy Field Guide & Hardware Documentation
+    shutil.copy2(BASE_DIR / "FIELD_GUIDE.md", TARGET_DIR / "FIELD_GUIDE.md")
     print("   + Included Field Guide: FIELD_GUIDE.md")
+    (TARGET_DIR / "docs").mkdir(exist_ok=True)
+    shutil.copy2(BASE_DIR / "docs" / "HOLLEY_USB_CAN_INTERFACE.md", TARGET_DIR / "docs" / "HOLLEY_USB_CAN_INTERFACE.md")
+    print("   + Included Hardware Interface Doc: docs/HOLLEY_USB_CAN_INTERFACE.md")
 
     # Create empty runtime directories
     (TARGET_DIR / "data").mkdir(exist_ok=True)

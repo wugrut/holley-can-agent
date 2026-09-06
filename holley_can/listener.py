@@ -84,8 +84,9 @@ class CANListener:
         # Subscribers: async callbacks invoked for every decoded frame
         self._subscribers: list[Callable[[DecodedFrame], Coroutine]] = []
 
-        # CAN bus handle
+        # CAN bus handle or Holley adapter
         self._bus: Optional[can.Bus] = None
+        self._holley_adapter: Any = None
         self._running = False
         self._task: Optional[asyncio.Task] = None
 
@@ -98,8 +99,14 @@ class CANListener:
 
     def subscribe(self, callback: Callable[[DecodedFrame], Coroutine]) -> None:
         """Register an async callback to receive every decoded frame."""
-        self._subscribers.append(callback)
-        logger.info("Subscriber registered: %s", callback.__qualname__)
+        if callback not in self._subscribers:
+            self._subscribers.append(callback)
+            logger.info("Subscriber registered: %s", callback.__qualname__)
+
+    def unsubscribe(self, callback: Callable[[DecodedFrame], Coroutine]) -> None:
+        """Remove a previously registered subscriber callback."""
+        if callback in self._subscribers:
+            self._subscribers.remove(callback)
 
     # ── Live state access ───────────────────────────────────────────────
 
@@ -182,16 +189,25 @@ class CANListener:
             self.channel, self.interface, self.bitrate,
         )
 
-        try:
-            self._bus = can.Bus(
-                interface=self.interface,
-                channel=self.channel,
-                bitrate=self.bitrate,
-                receive_own_messages=self.receive_own_messages,
-            )
-        except Exception as e:
-            logger.error("Failed to open CAN bus: %s", e)
-            raise
+        if self.interface in ("holley", "holley_usbcan"):
+            from app.hardware.holley_usbcan import HolleyUsbCanAdapter
+            self._holley_adapter = HolleyUsbCanAdapter(bitrate=self.bitrate, channel=self.channel)
+            success = await self._holley_adapter.connect()
+            if not success:
+                err = self._holley_adapter.get_status().error_message or "Failed to connect to Holley USB cable"
+                logger.error("Failed to connect Holley adapter: %s", err)
+                raise RuntimeError(err)
+        else:
+            try:
+                self._bus = can.Bus(
+                    interface=self.interface,
+                    channel=self.channel,
+                    bitrate=self.bitrate,
+                    receive_own_messages=self.receive_own_messages,
+                )
+            except Exception as e:
+                logger.error("Failed to open CAN bus: %s", e)
+                raise
 
         self._running = True
         self._start_time = time.time()
@@ -207,6 +223,9 @@ class CANListener:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._holley_adapter:
+            await self._holley_adapter.disconnect()
+            self._holley_adapter = None
         if self._bus:
             self._bus.shutdown()
             self._bus = None
@@ -220,10 +239,16 @@ class CANListener:
 
         while self._running:
             try:
-                # Non-blocking receive with timeout, offloaded to thread pool
-                msg: Optional[Message] = await loop.run_in_executor(
-                    None, lambda: self._bus.recv(timeout=0.1)
-                )
+                if self._holley_adapter:
+                    msg = await self._holley_adapter.receive(timeout=0.1)
+                elif self._bus:
+                    # Non-blocking receive with timeout, offloaded to thread pool
+                    msg = await loop.run_in_executor(
+                        None, lambda: self._bus.recv(timeout=0.1)
+                    )
+                else:
+                    await asyncio.sleep(0.1)
+                    continue
 
                 if msg is None:
                     continue

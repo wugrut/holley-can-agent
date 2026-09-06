@@ -6,16 +6,18 @@
 # CAN Hardware Interface Settings
 can:
   # Interface type options for Windows tuning laptops:
+  #   - 'holley'  : Official Holley USB-to-CAN Cable (558-443 via pre-installed Holley WinUSB driver)
   #   - 'pcan'    : PEAK-System PCAN-USB (Requires PCAN-Basic driver)
   #   - 'slcan'   : CANable / CANable Pro in SLCAN mode (Requires COM port)
   #   - 'simulator': Offline virtual simulator (no hardware needed)
-  interface: pcan
+  interface: holley
 
   # Channel:
+  #   - For Holley : 'HOLLEY_USBCAN_0'
   #   - For PCAN   : 'PCAN_USBBUS1' (Channel 1)
   #   - For CANable: 'COM3', 'COM4', etc. (Check Windows Device Manager)
   #   - For Linux  : 'can0'
-  channel: PCAN_USBBUS1
+  channel: HOLLEY_USBCAN_0
 
   # Holley HEFI Broadcast Standard Bitrate: 1 Mbit/s (1,000,000 bps)
   bitrate: 1000000

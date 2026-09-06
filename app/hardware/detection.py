@@ -13,16 +13,28 @@ def discover_available_adapters() -> List[Dict[str, Any]]:
     Detects potential CAN interfaces available on the host system.
     Returns list of discovered devices and recommended adapter configurations.
     """
-    adapters: List[Dict[str, Any]] = [
-        {
-            "adapter_type": "simulator",
-            "name": "Virtual Telemetry Simulator",
-            "channel": "sim_virtual0",
-            "available": True,
-            "recommended": False,
-            "description": "In-memory simulator supporting 10 operational profiles and fault injection",
-        }
-    ]
+    adapters: List[Dict[str, Any]] = []
+
+    # 1. Holley USB-to-CAN communication cable (WinUSB) on Windows [PREFERRED]
+    if sys.platform == "win32":
+        try:
+            from app.hardware.holley_usbcan import enumerate_holley_devices
+            holley_paths = enumerate_holley_devices(present_only=True)
+            cable_present = len(holley_paths) > 0
+            adapters.append({
+                "adapter_type": "holley",
+                "name": "Holley USB-CAN Cable (Part 558-443)",
+                "channel": "HOLLEY_USBCAN_0",
+                "available": True,
+                "recommended": True,
+                "cable_connected": cable_present,
+                "description": (
+                    "Official Holley USBCAN Dongle (VID: 0x2AD0, PID: 0x1005 via WinUSB) at 1,000,000 bps [PASSIVE / READ ONLY]"
+                    + (" — STATUS: CONNECTED & READY" if cable_present else " — STATUS: CABLE UNPLUGGED")
+                ),
+            })
+        except Exception:
+            pass
 
     # Check for Linux SocketCAN interfaces
     if sys.platform.startswith("linux"):
@@ -97,6 +109,16 @@ def discover_available_adapters() -> List[Dict[str, Any]]:
         })
     except ImportError:
         pass
+
+    # Fallback: Virtual Telemetry Simulator (always available offline)
+    adapters.append({
+        "adapter_type": "simulator",
+        "name": "Virtual Telemetry Simulator",
+        "channel": "sim_virtual0",
+        "available": True,
+        "recommended": False,
+        "description": "In-memory simulator supporting 10 operational profiles and fault injection",
+    })
 
     return adapters
 
