@@ -152,6 +152,7 @@ function handleMessage(msg) {
             }
             if (msg.stats) {
                 state.stats = msg.stats;
+                updateLiveHardwareStats(msg.stats);
             }
             break;
 
@@ -161,6 +162,10 @@ function handleMessage(msg) {
                 for (const [name, data] of Object.entries(msg.channels)) {
                     state.channels[name] = data;
                 }
+            }
+            if (msg.stats) {
+                state.stats = msg.stats;
+                updateLiveHardwareStats(msg.stats);
             }
             // Handle alerts
             if (msg.alerts && msg.alerts.length > 0) {
@@ -176,6 +181,7 @@ function handleMessage(msg) {
             }
             if (msg.stats) {
                 state.stats = msg.stats;
+                updateLiveHardwareStats(msg.stats);
             }
             break;
 
@@ -188,10 +194,19 @@ function handleMessage(msg) {
 
 function updateConnectionStatus(connected) {
     const el = document.getElementById('connection-status');
+    if (!el) return;
     const textEl = el.querySelector('.status-text');
     el.classList.toggle('connected', connected);
     el.classList.toggle('disconnected', !connected);
-    textEl.textContent = connected ? 'LIVE' : 'DISCONNECTED';
+    if (connected) {
+        if (textEl) textEl.textContent = 'LIVE';
+        el.setAttribute('data-tooltip-title', 'ECU LINK: LIVE');
+        el.setAttribute('data-tooltip-desc', 'CAN bus streaming active. Click to view live transceiver diagnostics, frame stats, and adapter details.');
+    } else {
+        if (textEl) textEl.textContent = 'CONNECT';
+        el.setAttribute('data-tooltip-title', 'CONNECT TO ECU');
+        el.setAttribute('data-tooltip-desc', 'Transceiver offline or no CAN traffic. Click to probe adapters, attempt connection, and open diagnostics.');
+    }
 }
 
 // ─── Alert Banner ───────────────────────────────────────────────────────────
@@ -260,6 +275,17 @@ document.getElementById('alert-dismiss').addEventListener('click', () => {
 });
 
 // ─── Utility ────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[tag] || tag));
+}
 
 function lerp(current, target, factor) {
     return current + (target - current) * factor;
@@ -645,7 +671,10 @@ function initWatchdog() {
         const overlay = document.getElementById('connection-overlay');
         if (!overlay) return;
         
-        if (!state.connected || (Date.now() - state.lastMessageTimestamp) > CONFIG.watchdogTimeoutMs) {
+        const hwModal = document.getElementById('hardware-modal');
+        const modalOpen = hwModal && !hwModal.classList.contains('hidden');
+
+        if ((!state.connected || (Date.now() - state.lastMessageTimestamp) > CONFIG.watchdogTimeoutMs) && !modalOpen) {
             overlay.classList.remove('hidden');
         } else {
             overlay.classList.add('hidden');
@@ -1076,14 +1105,219 @@ function initCopilot() {
         }
     }
 
-    function escapeHtml(str) {
-        return str.replace(/[&<>'"]/g, tag => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            "'": '&#39;',
-            '"': '&quot;'
-        }[tag] || tag));
+}
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[tag] || tag));
+}
+
+// ─── Hardware Link & Bus Diagnostics Modal ──────────────────────────────────
+
+function updateLiveHardwareStats(stats) {
+    if (!stats) return;
+    const hwModal = document.getElementById('hardware-modal');
+    if (hwModal && !hwModal.classList.contains('hidden')) {
+        const framesEl = document.getElementById('hw-stat-frames');
+        const errorsEl = document.getElementById('hw-stat-errors');
+        if (framesEl && stats.frames_decoded !== undefined) {
+            framesEl.textContent = Number(stats.frames_decoded).toLocaleString();
+        }
+        if (errorsEl && stats.error_frames !== undefined) {
+            errorsEl.textContent = Number(stats.error_frames).toLocaleString();
+        }
+    }
+}
+
+async function refreshHardwareDiagnostics() {
+    const statusEl = document.getElementById('hw-probe-status');
+    const ifaceEl = document.getElementById('hw-stat-interface');
+    const bitrateEl = document.getElementById('hw-stat-bitrate');
+    const stateEl = document.getElementById('hw-stat-state');
+    const ecuEl = document.getElementById('hw-stat-ecu');
+    const framesEl = document.getElementById('hw-stat-frames');
+    const errorsEl = document.getElementById('hw-stat-errors');
+    const adaptersContainer = document.getElementById('hw-adapters-container');
+
+    // 1. Fetch live transceiver status from API
+    try {
+        const statusRes = await fetch('/api/hardware/status');
+        if (statusRes.ok) {
+            const data = await statusRes.json();
+            if (ifaceEl) ifaceEl.textContent = `${data.interface || '—'} (${data.channel || 'default'})`;
+            if (bitrateEl) bitrateEl.textContent = `${(data.bitrate || 1000000).toLocaleString()} baud (1 Mbps)`;
+            if (stateEl) {
+                const isLive = data.is_running && state.connected;
+                stateEl.textContent = isLive ? 'STREAMING' : (data.is_running ? 'LISTENING (WAITING FOR FRAMES)' : 'STANDBY');
+                stateEl.style.color = isLive ? 'var(--accent-green)' : (data.is_running ? 'var(--accent-amber)' : 'var(--accent-red)');
+            }
+            if (ecuEl) {
+                ecuEl.textContent = data.ecu_serial 
+                    ? `0x${Number(data.ecu_serial).toString(16).toUpperCase()} (Terminator X)`
+                    : (state.connected ? '0x1A5 (Terminator X)' : 'Not detected (Key OFF)');
+            }
+            if (data.stats) {
+                if (framesEl && data.stats.frames_decoded !== undefined) {
+                    framesEl.textContent = Number(data.stats.frames_decoded).toLocaleString();
+                }
+                if (errorsEl && data.stats.error_frames !== undefined) {
+                    errorsEl.textContent = Number(data.stats.error_frames).toLocaleString();
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to fetch hardware status:', e);
+    }
+
+    // 2. Fetch discovered physical/virtual adapters
+    try {
+        const adaptersRes = await fetch('/api/hardware/adapters');
+        if (adaptersRes.ok) {
+            const data = await adaptersRes.json();
+            if (adaptersContainer && data.adapters) {
+                if (!Array.isArray(data.adapters) || data.adapters.length === 0) {
+                    adaptersContainer.innerHTML = '<div class="hw-loading">No physical USB-CAN adapters detected on host system. Check USB cable and drivers.</div>';
+                } else {
+                    let html = '';
+                    for (const ad of data.adapters) {
+                        const isCurrent = (ad.channel === data.current_channel || ad.name === data.current_interface);
+                        const badgeClass = isCurrent ? 'hw-badge-active' : (ad.available ? 'hw-badge-avail' : 'hw-badge-unavail');
+                        const badgeText = isCurrent ? 'ACTIVE BUS' : (ad.available ? 'AVAILABLE' : 'OFFLINE');
+                        const icon = (ad.adapter_type === 'pcan' || String(ad.name).includes('PCAN')) ? '🔌' : 
+                                     (ad.adapter_type === 'slcan' || String(ad.name).includes('COM')) ? '📟' : 
+                                     (ad.adapter_type === 'socketcan') ? '🐧' : '💻';
+                        html += `
+                            <div class="hw-adapter-item">
+                                <div class="hw-adapter-left">
+                                    <span style="font-size: 16px;">${icon}</span>
+                                    <div>
+                                        <strong>${escapeHtml(ad.name || ad.channel || 'CAN Interface')}</strong>
+                                        <div style="font-size: 10px; color: var(--text-dim);">${escapeHtml(ad.adapter_type ? ad.adapter_type.toUpperCase() : 'DRIVER')} &bull; ${escapeHtml(ad.description || ad.channel || 'Host Interface')}</div>
+                                    </div>
+                                </div>
+                                <span class="hw-adapter-badge ${badgeClass}">${badgeText}</span>
+                            </div>
+                        `;
+                    }
+                    adaptersContainer.innerHTML = html;
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to fetch adapters:', e);
+        if (adaptersContainer) {
+            adaptersContainer.innerHTML = '<div class="hw-loading" style="color: var(--accent-red);">Host adapter scan error</div>';
+        }
+    }
+}
+
+async function reconnectHardware(btnEl) {
+    const statusEl = document.getElementById('hw-probe-status');
+    const reconnectLabel = document.getElementById('hw-reconnect-label');
+    if (statusEl) statusEl.textContent = 'Probing CAN hardware adapters...';
+    if (reconnectLabel) reconnectLabel.textContent = 'Probing...';
+    if (btnEl) btnEl.disabled = true;
+
+    showToast('⚡ Probing CAN hardware transceivers...', 'info');
+
+    // Reset WebSocket reconnect state and retry immediate connection
+    state.reconnectAttempts = 0;
+    if (!state.connected || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        connectWebSocket();
+    }
+
+    try {
+        const res = await fetch('/api/hardware/reconnect', { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'success') {
+            showToast('✅ Hardware transceiver active', 'success');
+            if (statusEl) statusEl.textContent = 'Transceiver probed and active';
+        } else {
+            showToast(`Hardware probe: ${data.message || 'Check adapters'}`, 'error');
+            if (statusEl) statusEl.textContent = `Probe: ${data.message || 'Error'}`;
+        }
+    } catch (e) {
+        console.warn('Hardware reconnect request failed:', e);
+        if (statusEl) statusEl.textContent = 'Hardware probe request failed';
+    } finally {
+        if (reconnectLabel) reconnectLabel.textContent = 'Re-probe Bus & Connect';
+        if (btnEl) btnEl.disabled = false;
+        refreshHardwareDiagnostics();
+    }
+}
+
+function initHardwareModal() {
+    const connBtn = document.getElementById('connection-status');
+    const modal = document.getElementById('hardware-modal');
+    const closeBtn = document.getElementById('hardware-modal-close');
+    const reconnectBtn = document.getElementById('btn-hardware-reconnect');
+    const refreshBtn = document.getElementById('btn-hardware-refresh');
+    const overlayReconnectBtn = document.getElementById('btn-overlay-reconnect');
+    const overlayDiagBtn = document.getElementById('btn-overlay-diag');
+
+    if (!modal) return;
+
+    function openModal() {
+        modal.classList.remove('hidden');
+        refreshHardwareDiagnostics();
+    }
+
+    function closeModal() {
+        modal.classList.add('hidden');
+    }
+
+    if (connBtn) {
+        connBtn.addEventListener('click', () => {
+            if (!state.connected) {
+                // If disconnected, trigger immediate connection probe
+                reconnectHardware(reconnectBtn);
+            }
+            openModal();
+        });
+    }
+
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+            closeModal();
+        }
+    });
+
+    if (reconnectBtn) {
+        reconnectBtn.addEventListener('click', () => reconnectHardware(reconnectBtn));
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            const statusEl = document.getElementById('hw-probe-status');
+            if (statusEl) statusEl.textContent = 'Scanning host interfaces...';
+            refreshHardwareDiagnostics().then(() => {
+                if (statusEl) statusEl.textContent = 'Scan complete';
+            });
+        });
+    }
+
+    if (overlayReconnectBtn) {
+        overlayReconnectBtn.addEventListener('click', () => {
+            reconnectHardware(reconnectBtn);
+            openModal();
+        });
+    }
+
+    if (overlayDiagBtn) {
+        overlayDiagBtn.addEventListener('click', () => {
+            openModal();
+        });
     }
 }
 
@@ -1424,6 +1658,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initLogger();
     initCopilot();
     initTooltips();
+    initHardwareModal();
 });
 
 // ─── Dynamic Grid Generation & Rendering ────────────────────────────────────

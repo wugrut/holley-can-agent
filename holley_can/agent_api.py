@@ -245,6 +245,51 @@ def create_app(
             ]
         }
 
+    # ── Hardware Diagnostics & Transceiver API ──────────────────────────
+
+    @app.get("/api/hardware/status")
+    async def get_hardware_status():
+        """Returns live hardware transceiver state, error frames, and discovery status."""
+        return {
+            "interface": getattr(listener, "interface", "unknown"),
+            "channel": getattr(listener, "channel", "unknown"),
+            "bitrate": getattr(listener, "bitrate", 1_000_000),
+            "is_running": getattr(listener, "_running", False),
+            "ecu_serial": listener.ecu_serial,
+            "stats": listener.stats,
+        }
+
+    @app.get("/api/hardware/adapters")
+    async def get_hardware_adapters():
+        """Scans the host system for physical and virtual CAN hardware interfaces."""
+        try:
+            from app.hardware.detection import discover_available_adapters
+            detected = discover_available_adapters()
+        except Exception as e:
+            detected = [{"adapter_type": "unknown", "name": f"Scan error: {e}", "available": False}]
+
+        return {
+            "current_interface": getattr(listener, "interface", "unknown"),
+            "current_channel": getattr(listener, "channel", "unknown"),
+            "bitrate": getattr(listener, "bitrate", 1_000_000),
+            "is_running": getattr(listener, "_running", False),
+            "adapters": detected,
+        }
+
+    @app.post("/api/hardware/reconnect")
+    async def reconnect_hardware():
+        """Probes or restarts the CAN hardware listener to clear error states."""
+        try:
+            if not getattr(listener, "_running", False):
+                await listener.start()
+            return {
+                "status": "success",
+                "message": "Hardware bus transceiver probed and active.",
+                "stats": listener.stats,
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     # ── Run Logger API ──────────────────────────────────────────────────
 
     @app.post("/api/log/start")

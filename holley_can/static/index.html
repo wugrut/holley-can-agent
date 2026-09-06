@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=2.5">
+    <link rel="stylesheet" href="/static/style.css?v=2.6">
 </head>
 <body>
     <!-- Status Bar -->
@@ -20,12 +20,12 @@
                 </svg>
                 <span class="logo-text">HOLLEY CAN AGENT</span>
             </div>
-            <div id="connection-status" class="status-pill disconnected"
-                 data-tooltip-title="ECU LINK STATUS"
-                 data-tooltip-desc="Real-time WebSocket connection state between this dashboard display and the CAN bus hardware transceiver.">
+            <button type="button" id="connection-status" class="status-pill disconnected"
+                    data-tooltip-title="ECU LINK STATUS"
+                    data-tooltip-desc="Real-time link status between this dashboard and the CAN transceiver. Click to connect or view hardware bus diagnostics.">
                 <span class="status-dot"></span>
                 <span class="status-text">DISCONNECTED</span>
-            </div>
+            </button>
         </div>
         <div class="status-right">
             <div id="ecu-info" class="ecu-info"
@@ -206,7 +206,15 @@
         <div class="overlay-content">
             <div class="overlay-icon">⚡</div>
             <h2>CONNECTION LOST</h2>
-            <p>WiFi connection lost or engine ECU offline. Reconnecting...</p>
+            <p>CAN bus transceiver offline or ECU disconnected.</p>
+            <div class="overlay-actions" style="display: flex; gap: 10px; justify-content: center; margin-top: 18px; flex-wrap: wrap;">
+                <button type="button" id="btn-overlay-reconnect" class="action-btn primary-btn" style="min-width: 140px;">
+                    <span>⚡</span> <span>Reconnect Now</span>
+                </button>
+                <button type="button" id="btn-overlay-diag" class="action-btn secondary-btn" style="min-width: 140px;">
+                    <span>🔍</span> <span>Bus Diagnostics</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -285,6 +293,104 @@
         <span id="stat-uptime" data-tooltip-title="UPTIME" data-tooltip-desc="Elapsed time since telemetry listener initialization.">Uptime: 0s</span>
     </footer>
 
+    <!-- CAN Hardware Link & Bus Diagnostics Modal -->
+    <div id="hardware-modal" class="modal hidden" role="dialog" aria-labelledby="hw-modal-title" aria-modal="true">
+        <div class="modal-content modal-content-large">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="color: var(--accent-cyan); font-size: 18px;">⚡</span>
+                    <h3 id="hw-modal-title">CAN Hardware Link & Bus Diagnostics</h3>
+                </div>
+                <button id="hardware-modal-close" class="modal-close-btn"
+                        data-tooltip-title="CLOSE DIAGNOSTICS"
+                        data-tooltip-desc="Close hardware diagnostics modal.">✕</button>
+            </div>
+            <div class="modal-body">
+                <!-- Action Controls Banner -->
+                <div class="hw-action-bar">
+                    <button type="button" id="btn-hardware-reconnect" class="action-btn primary-btn">
+                        <span>⚡</span>
+                        <span id="hw-reconnect-label">Re-probe Bus & Connect</span>
+                    </button>
+                    <button type="button" id="btn-hardware-refresh" class="action-btn secondary-btn">
+                        <span>🔄</span>
+                        <span>Scan Adapters</span>
+                    </button>
+                    <span id="hw-probe-status" class="hw-probe-status">Ready</span>
+                </div>
+
+                <!-- Hardware Metrics Grid -->
+                <div class="hw-section-title">ACTIVE TRANSCEIVER TELEMETRY</div>
+                <div class="hw-metrics-grid">
+                    <div class="hw-metric-card">
+                        <div class="hw-metric-label">INTERFACE / DRIVER</div>
+                        <div id="hw-stat-interface" class="hw-metric-val font-mono">—</div>
+                    </div>
+                    <div class="hw-metric-card">
+                        <div class="hw-metric-label">BAUD RATE</div>
+                        <div id="hw-stat-bitrate" class="hw-metric-val font-mono">1,000,000 baud (1 Mbps)</div>
+                    </div>
+                    <div class="hw-metric-card">
+                        <div class="hw-metric-label">TRANSCEIVER STATE</div>
+                        <div id="hw-stat-state" class="hw-metric-val font-mono">STANDBY</div>
+                    </div>
+                    <div class="hw-metric-card">
+                        <div class="hw-metric-label">ECU BROADCAST ID</div>
+                        <div id="hw-stat-ecu" class="hw-metric-val font-mono">0x1A5 (Terminator X)</div>
+                    </div>
+                    <div class="hw-metric-card">
+                        <div class="hw-metric-label">FRAMES DECODED</div>
+                        <div id="hw-stat-frames" class="hw-metric-val font-mono">0</div>
+                    </div>
+                    <div class="hw-metric-card">
+                        <div class="hw-metric-label">BUS ERROR FRAMES</div>
+                        <div id="hw-stat-errors" class="hw-metric-val font-mono">0</div>
+                    </div>
+                </div>
+
+                <!-- Discovered Adapters on Host System -->
+                <div class="hw-section-title">HOST SYSTEM DETECTED CAN HARDWARE</div>
+                <div id="hw-adapters-container" class="hw-adapters-container">
+                    <div class="hw-loading">Scanning host CAN hardware interfaces...</div>
+                </div>
+
+                <!-- 4-Step Field Troubleshooting Guide -->
+                <div class="hw-section-title">PLUGGED IN BUT NOT CONNECTING? FIELD CHECKLIST</div>
+                <div class="hw-checklist">
+                    <div class="hw-checklist-item">
+                        <div class="hw-check-step">1</div>
+                        <div class="hw-check-content">
+                            <strong>Ignition Switch in RUN Position:</strong>
+                            <p>The Holley Terminator X ECU CAN transceiver only powers up when switched +12V is present in the "RUN" position. Accessory (ACC) is insufficient.</p>
+                        </div>
+                    </div>
+                    <div class="hw-checklist-item">
+                        <div class="hw-check-step">2</div>
+                        <div class="hw-check-content">
+                            <strong>Enable CAN Broadcast in Holley EFI:</strong>
+                            <p>In Holley EFI software, navigate to <em>System Setup → CAN Devices / Broadcast</em> and confirm CAN Broadcast is checked and active.</p>
+                        </div>
+                    </div>
+                    <div class="hw-checklist-item">
+                        <div class="hw-check-step">3</div>
+                        <div class="hw-check-content">
+                            <strong>Verify 4-Pin Metri-Pack Harness Pinout:</strong>
+                            <p><strong>Pin A (White):</strong> CAN-High &nbsp;|&nbsp; <strong>Pin B (Blue):</strong> CAN-Low &nbsp;|&nbsp; <strong>Pin D (Black):</strong> Ground/Shield.<br>
+                            ⚠️ <strong>Pin C (Red/Orange):</strong> Switched +12V. <em>Leave Pin C disconnected</em> from standard USB-CAN adapters to prevent 12V damage!</p>
+                        </div>
+                    </div>
+                    <div class="hw-checklist-item">
+                        <div class="hw-check-step">4</div>
+                        <div class="hw-check-content">
+                            <strong>Verify 60Ω Bus Termination:</strong>
+                            <p>With vehicle key OFF, measure resistance across Pin A (CAN H) and Pin B (CAN L) with an ohmmeter. It must read <strong>~60 Ω</strong> (two 120 Ω resistors in parallel: one internal to Terminator X, one at bus end). If it reads 120 Ω, a terminating resistor is missing.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Global Floating Futuristic Tooltip Overlay -->
     <div id="custom-tooltip" class="custom-tooltip" role="tooltip" aria-hidden="true" style="display: none;">
         <div class="tooltip-header">
@@ -295,6 +401,6 @@
         <div class="tooltip-hint"></div>
     </div>
 
-    <script src="/static/dashboard.js?v=2.5"></script>
+    <script src="/static/dashboard.js?v=2.6"></script>
 </body>
 </html>
