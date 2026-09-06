@@ -758,12 +758,16 @@ function updateLoggerUI(isLogging, session) {
         logToggleBtn.textContent = 'STOP';
         logToggleBtn.classList.remove('log-start');
         logToggleBtn.classList.add('log-active');
+        logToggleBtn.setAttribute('data-tooltip-title', 'STOP RECORDER');
+        logToggleBtn.setAttribute('data-tooltip-desc', 'Click to stop the active recording session and flush telemetry frames to disk.');
         logStatusText.textContent = `REC: ${session ? session.name : 'ACTIVE'}`;
         logStatusText.className = 'log-status-running';
     } else {
         logToggleBtn.textContent = 'REC';
         logToggleBtn.classList.remove('log-active');
         logToggleBtn.classList.add('log-start');
+        logToggleBtn.setAttribute('data-tooltip-title', 'RECORD TELEMETRY (REC)');
+        logToggleBtn.setAttribute('data-tooltip-desc', 'Start recording high-resolution time-series data to the local SQLite database.');
         logStatusText.textContent = 'IDLE';
         logStatusText.className = 'log-status-idle';
     }
@@ -792,7 +796,9 @@ function renderSessionsList(sessions) {
                 <td>${dateStr}</td>
                 <td>${durationText}</td>
                 <td>
-                    <a href="/api/log/export/${s.id}" class="download-link" target="_blank">Download CSV</a>
+                    <a href="/api/log/export/${s.id}" class="download-link" target="_blank"
+                       data-tooltip-title="EXPORT TELEMETRY CSV"
+                       data-tooltip-desc="Download full 50Hz high-speed CAN telemetry log as a CSV spreadsheet for MegaLogViewer or Excel.">Download CSV</a>
                 </td>
             </tr>
         `;
@@ -817,12 +823,21 @@ function initTheme() {
 
 function applyTheme(theme) {
     const root = document.documentElement;
+    const themeBtn = document.getElementById('btn-theme-toggle');
     if (theme === 'light') {
         root.setAttribute('data-theme', 'light');
-        document.getElementById('btn-theme-toggle').textContent = '🌙';
+        if (themeBtn) {
+            themeBtn.textContent = '🌙';
+            themeBtn.setAttribute('data-tooltip-title', 'SWITCH TO NIGHT THEME');
+            themeBtn.setAttribute('data-tooltip-desc', 'Activate cyberpunk dark mode optimized for low-light dyno room and night track driving.');
+        }
     } else {
         root.removeAttribute('data-theme');
-        document.getElementById('btn-theme-toggle').textContent = '☀️';
+        if (themeBtn) {
+            themeBtn.textContent = '☀️';
+            themeBtn.setAttribute('data-tooltip-title', 'SWITCH TO DAY THEME');
+            themeBtn.setAttribute('data-tooltip-desc', 'Activate high-contrast bright theme optimized for direct sunlight in the paddock.');
+        }
     }
 }
 
@@ -912,9 +927,13 @@ function toggleEditMode(forceState) {
         if (state.isEditingLayout) {
             btnEdit.textContent = '✓ DONE';
             btnEdit.classList.add('active', 'editing-active');
+            btnEdit.setAttribute('data-tooltip-title', 'LOCK LAYOUT (DONE)');
+            btnEdit.setAttribute('data-tooltip-desc', 'Exit layout customization mode and lock current gauge positions.');
         } else {
             btnEdit.textContent = 'EDIT';
             btnEdit.classList.remove('active', 'editing-active');
+            btnEdit.setAttribute('data-tooltip-title', 'EDIT CLUSTER LAYOUT');
+            btnEdit.setAttribute('data-tooltip-desc', 'Enable drag-and-drop mode to reposition, reconfigure, or add new telemetry tiles.');
         }
     }
     
@@ -936,13 +955,22 @@ function applyLayout(layoutType) {
     document.querySelectorAll('.layout-section').forEach(el => {
         el.classList.add('hidden');
     });
-    document.getElementById('btn-layout-diag').classList.remove('active');
+    const btnDiag = document.getElementById('btn-layout-diag');
+    if (btnDiag) btnDiag.classList.remove('active');
     
     if (layoutType === 'grid') {
         document.getElementById('gauge-grid').classList.remove('hidden');
+        if (btnDiag) {
+            btnDiag.setAttribute('data-tooltip-title', 'DIAGNOSTIC VIEW');
+            btnDiag.setAttribute('data-tooltip-desc', 'Toggle full high-density tabular view of all raw ECU CAN broadcast channels.');
+        }
     } else if (layoutType === 'diag') {
         document.getElementById('diag-grid').classList.remove('hidden');
-        document.getElementById('btn-layout-diag').classList.add('active');
+        if (btnDiag) {
+            btnDiag.classList.add('active');
+            btnDiag.setAttribute('data-tooltip-title', 'EXIT DIAGNOSTICS VIEW');
+            btnDiag.setAttribute('data-tooltip-desc', 'Return to visual gauge dashboard.');
+        }
         renderDiagnostics();
     }
 }
@@ -970,13 +998,131 @@ function initVoiceToggle() {
 
 function updateVoiceToggleUI() {
     const toggleBtn = document.getElementById('btn-voice-toggle');
+    if (!toggleBtn) return;
     if (state.voiceEnabled) {
         toggleBtn.textContent = '🔊';
         toggleBtn.classList.add('active');
+        toggleBtn.setAttribute('data-tooltip-title', 'VOICE ALERTS (ON)');
+        toggleBtn.setAttribute('data-tooltip-desc', 'Click to mute synthesized speech warnings for engine alarms and critical faults.');
     } else {
         toggleBtn.textContent = '🔇';
         toggleBtn.classList.remove('active');
+        toggleBtn.setAttribute('data-tooltip-title', 'VOICE ALERTS (MUTED)');
+        toggleBtn.setAttribute('data-tooltip-desc', 'Click to enable spoken voice announcements when critical engine thresholds are breached.');
     }
+}
+
+// ─── Futuristic On-Hover Tooltip Manager ─────────────────────────────────────
+
+function initTooltips() {
+    let activeTarget = null;
+    const tooltipEl = document.getElementById('custom-tooltip');
+    if (!tooltipEl) return;
+
+    const titleEl = tooltipEl.querySelector('.tooltip-title');
+    const descEl = tooltipEl.querySelector('.tooltip-desc');
+    const hintEl = tooltipEl.querySelector('.tooltip-hint');
+
+    function showTooltip(target) {
+        if (!target) return;
+        const title = target.getAttribute('data-tooltip-title') || target.title || '';
+        const desc = target.getAttribute('data-tooltip-desc') || '';
+        const hint = target.getAttribute('data-tooltip-hint') || '';
+
+        if (!title && !desc) return;
+
+        // Suppress native browser tooltip by temporarily saving title
+        if (target.title) {
+            target.dataset.originalTitle = target.title;
+            target.removeAttribute('title');
+        }
+
+        activeTarget = target;
+        if (titleEl) titleEl.textContent = title;
+        if (descEl) descEl.textContent = desc;
+        if (hintEl) {
+            hintEl.textContent = hint;
+            hintEl.style.display = hint ? 'block' : 'none';
+        }
+
+        // Make visible and set display before calculating bounding box
+        tooltipEl.style.display = 'block';
+        tooltipEl.classList.add('visible');
+        tooltipEl.setAttribute('aria-hidden', 'false');
+
+        positionTooltip(target);
+    }
+
+    function positionTooltip(target) {
+        if (!tooltipEl || !target) return;
+        const rect = target.getBoundingClientRect();
+        const tooltipRect = tooltipEl.getBoundingClientRect();
+        const padding = 12;
+
+        // Center horizontally above or below element
+        let left = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+        let top = rect.bottom + 8; // Default below target
+
+        // If placed too close to bottom of viewport, flip to above
+        if (top + tooltipRect.height > window.innerHeight - padding) {
+            top = rect.top - tooltipRect.height - 8;
+        }
+
+        // If top is still negative, clamp to padding
+        if (top < padding) top = padding;
+
+        // Clamp horizontally so it never clips off screen edges
+        if (left < padding) left = padding;
+        if (left + tooltipRect.width > window.innerWidth - padding) {
+            left = window.innerWidth - tooltipRect.width - padding;
+        }
+
+        tooltipEl.style.left = `${Math.round(left)}px`;
+        tooltipEl.style.top = `${Math.round(top)}px`;
+    }
+
+    function hideTooltip() {
+        if (activeTarget && activeTarget.dataset.originalTitle) {
+            activeTarget.title = activeTarget.dataset.originalTitle;
+            delete activeTarget.dataset.originalTitle;
+        }
+        activeTarget = null;
+        if (tooltipEl) {
+            tooltipEl.classList.remove('visible');
+            tooltipEl.style.display = 'none';
+            tooltipEl.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function handleEnter(e) {
+        const target = e.target.closest('[data-tooltip-title], [data-tooltip-desc]');
+        if (!target) return;
+        if (activeTarget === target) return;
+        showTooltip(target);
+    }
+
+    function handleLeave(e) {
+        const target = e.target.closest('[data-tooltip-title], [data-tooltip-desc]');
+        if (!target) return;
+        if (!e.relatedTarget || !target.contains(e.relatedTarget)) {
+            hideTooltip();
+        }
+    }
+
+    // Event delegation for mouse & pointer hover
+    document.addEventListener('mouseover', handleEnter, { passive: true });
+    document.addEventListener('mouseout', handleLeave, { passive: true });
+    document.addEventListener('pointerover', handleEnter, { passive: true });
+    document.addEventListener('pointerout', handleLeave, { passive: true });
+
+    // Keyboard accessibility
+    document.addEventListener('focusin', handleEnter);
+    document.addEventListener('focusout', handleLeave);
+
+    // Dismiss on click, touch, or scroll
+    document.addEventListener('click', () => hideTooltip());
+    document.addEventListener('touchstart', () => hideTooltip(), { passive: true });
+    window.addEventListener('scroll', () => hideTooltip(), true);
 }
 
 // ─── Init ───────────────────────────────────────────────────────────────────
@@ -995,6 +1141,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initLayout();
     initVoiceToggle();
     initLogger();
+    initTooltips();
 });
 
 // ─── Dynamic Grid Generation & Rendering ────────────────────────────────────
@@ -1051,7 +1198,7 @@ function initGrid() {
         html += `<div class="gauge-header">
             <span class="gauge-label">${meta.label}</span>
             ${!isCompact && meta.unit ? `<span class="gauge-unit" id="dyn-unit-${index}">${meta.unit}</span>` : ''}
-            <span class="gauge-drag-handle" title="Drag to rearrange">⠿</span>
+            <span class="gauge-drag-handle" data-tooltip-title="DRAG TO REPOSITION" data-tooltip-desc="Click and drag or touch to reorder this gauge tile on your telemetry cluster.">⠿</span>
         </div>`;
         
         // Body
@@ -1124,6 +1271,8 @@ function initGrid() {
     // Add "Add Gauge" button
     const addCard = document.createElement('div');
     addCard.className = 'gauge-card gauge-card-add';
+    addCard.setAttribute('data-tooltip-title', 'ADD CUSTOM GAUGE');
+    addCard.setAttribute('data-tooltip-desc', 'Add a new telemetry tile (e.g. Oil Pressure, Fuel Pressure, Boost, Target AFR) to this dashboard layout.');
     addCard.innerHTML = '<span class="gauge-card-add-icon">+</span>';
     addCard.addEventListener('click', () => {
         openGaugeSettings(-1); // -1 means new gauge

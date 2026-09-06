@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=2.2">
 </head>
 <body>
     <!-- Status Bar -->
@@ -20,15 +20,23 @@
                 </svg>
                 <span class="logo-text">HOLLEY CAN AGENT</span>
             </div>
-            <div id="connection-status" class="status-pill disconnected">
+            <div id="connection-status" class="status-pill disconnected"
+                 data-tooltip-title="ECU LINK STATUS"
+                 data-tooltip-desc="Real-time WebSocket connection state between this dashboard display and the CAN bus hardware transceiver.">
                 <span class="status-dot"></span>
                 <span class="status-text">DISCONNECTED</span>
             </div>
         </div>
         <div class="status-right">
-            <div id="ecu-info" class="ecu-info">ECU: —</div>
-            <div id="fps-counter" class="fps-counter">0 FPS</div>
-            <div id="clock" class="clock"></div>
+            <div id="ecu-info" class="ecu-info"
+                 data-tooltip-title="ECU IDENTIFIER"
+                 data-tooltip-desc="Holley EFI Terminator X Max broadcast identifier decoded from CAN frames.">ECU: —</div>
+            <div id="fps-counter" class="fps-counter"
+                 data-tooltip-title="RENDER FRAMERATE"
+                 data-tooltip-desc="Current UI refresh rate in frames per second for smooth gauge needle animation.">0 FPS</div>
+            <div id="clock" class="clock"
+                 data-tooltip-title="SYSTEM TIME"
+                 data-tooltip-desc="Synchronized system clock used for data logging timestamps."></div>
         </div>
     </header>
 
@@ -36,23 +44,39 @@
     <section id="control-panel">
         <div class="control-group">
             <span class="control-label">LAYOUT:</span>
-            <select id="layout-selector" class="form-control" style="width: auto; padding: 4px 8px; margin-right: 8px;">
+            <select id="layout-selector" class="form-control" style="width: auto; padding: 4px 8px; margin-right: 8px;"
+                    data-tooltip-title="DASHBOARD LAYOUT"
+                    data-tooltip-desc="Switch between Grid, Track, and Drag custom gauge arrangements.">
                 <!-- Populated by JS -->
             </select>
-            <button id="btn-edit-layout" class="control-btn" title="Rearrange Gauges on Touchscreen">EDIT</button>
-            <button id="btn-layout-diag" class="control-btn">DIAG</button>
+            <button id="btn-edit-layout" class="control-btn"
+                    data-tooltip-title="EDIT LAYOUT"
+                    data-tooltip-desc="Enable touchscreen drag-and-drop mode to reposition and customize gauge tiles.">EDIT</button>
+            <button id="btn-layout-diag" class="control-btn"
+                    data-tooltip-title="DIAGNOSTIC VIEW"
+                    data-tooltip-desc="Toggle full high-density tabular view of all raw ECU CAN broadcast channels.">DIAG</button>
         </div>
         
         <div class="control-group">
             <span class="control-label">LOGGER:</span>
-            <button id="btn-log-toggle" class="control-btn log-start">REC</button>
-            <span id="log-status-text" class="log-status-idle">IDLE</span>
-            <button id="btn-log-list" class="control-btn">LOGS</button>
+            <button id="btn-log-toggle" class="control-btn log-start"
+                    data-tooltip-title="RECORD TELEMETRY (REC)"
+                    data-tooltip-desc="Start or stop recording high-resolution time-series data to the local SQLite database.">REC</button>
+            <span id="log-status-text" class="log-status-idle"
+                  data-tooltip-title="LOGGER STATUS"
+                  data-tooltip-desc="Current state of the onboard telemetry recording engine.">IDLE</span>
+            <button id="btn-log-list" class="control-btn"
+                    data-tooltip-title="SAVED LOGS"
+                    data-tooltip-desc="Open the session log manager to browse past runs and export CSV data.">LOGS</button>
         </div>
         
         <div class="control-group right-align">
-            <button id="btn-theme-toggle" class="control-btn circle-btn" aria-label="Toggle Day/Night Mode">🌓</button>
-            <button id="btn-voice-toggle" class="control-btn circle-btn" aria-label="Toggle Voice Alarms">🔊</button>
+            <button id="btn-theme-toggle" class="control-btn circle-btn" aria-label="Toggle Day/Night Mode"
+                    data-tooltip-title="DAY / NIGHT THEME"
+                    data-tooltip-desc="Toggle between high-contrast daylight theme and dark pit mode.">🌓</button>
+            <button id="btn-voice-toggle" class="control-btn circle-btn" aria-label="Toggle Voice Alarms"
+                    data-tooltip-title="VOICE ALERTS"
+                    data-tooltip-desc="Turn spoken voice warnings on or off for critical engine alarm thresholds.">🔊</button>
         </div>
     </section>
 
@@ -60,7 +84,9 @@
     <div id="alert-banner" class="alert-banner hidden">
         <div class="alert-icon">⚠</div>
         <div id="alert-message" class="alert-message"></div>
-        <button id="alert-dismiss" class="alert-dismiss" aria-label="Dismiss alert">✕</button>
+        <button id="alert-dismiss" class="alert-dismiss" aria-label="Dismiss alert"
+                data-tooltip-title="DISMISS ALARM"
+                data-tooltip-desc="Close this active warning alert banner.">✕</button>
     </div>
 
     <div id="dashboard-content">
@@ -102,7 +128,9 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Recorded Logs</h3>
-                <button id="modal-close" class="modal-close-btn">✕</button>
+                <button id="modal-close" class="modal-close-btn"
+                        data-tooltip-title="CLOSE LOGS"
+                        data-tooltip-desc="Close the session logs modal window.">✕</button>
             </div>
             <div class="modal-body">
                 <table id="sessions-table">
@@ -127,7 +155,9 @@
         <div class="modal-content modal-content-small">
             <div class="modal-header">
                 <h3>Gauge Settings</h3>
-                <button id="gauge-settings-close" class="modal-close-btn">✕</button>
+                <button id="gauge-settings-close" class="modal-close-btn"
+                        data-tooltip-title="CANCEL SETTINGS"
+                        data-tooltip-desc="Exit without saving changes.">✕</button>
             </div>
             <div class="modal-body form-body">
                 <input type="hidden" id="setting-gauge-index">
@@ -149,12 +179,20 @@
                     </select>
                 </div>
                 <div class="modal-actions-grid">
-                    <button id="btn-move-left" class="action-btn secondary-btn">◀ Move Left</button>
-                    <button id="btn-move-right" class="action-btn secondary-btn">Move Right ▶</button>
+                    <button id="btn-move-left" class="action-btn secondary-btn"
+                            data-tooltip-title="SHIFT LEFT"
+                            data-tooltip-desc="Move this gauge one position earlier in the display order.">◀ Move Left</button>
+                    <button id="btn-move-right" class="action-btn secondary-btn"
+                            data-tooltip-title="SHIFT RIGHT"
+                            data-tooltip-desc="Move this gauge one position later in the display order.">Move Right ▶</button>
                 </div>
                 <div class="modal-actions">
-                    <button id="btn-delete-gauge" class="action-btn danger-btn">Delete Gauge</button>
-                    <button id="btn-save-gauge" class="action-btn primary-btn">Save Changes</button>
+                    <button id="btn-delete-gauge" class="action-btn danger-btn"
+                            data-tooltip-title="DELETE GAUGE"
+                            data-tooltip-desc="Remove this tile completely from the current dashboard.">Delete Gauge</button>
+                    <button id="btn-save-gauge" class="action-btn primary-btn"
+                            data-tooltip-title="SAVE CHANGES"
+                            data-tooltip-desc="Apply the selected telemetry channel and visualization style.">Save Changes</button>
                 </div>
             </div>
         </div>
@@ -171,12 +209,22 @@
 
     <!-- Footer Stats -->
     <footer id="footer-stats">
-        <span id="stat-frames">Frames: 0</span>
-        <span id="stat-channels">Channels: 0</span>
-        <span id="stat-errors">Errors: 0</span>
-        <span id="stat-uptime">Uptime: 0s</span>
+        <span id="stat-frames" data-tooltip-title="CAN FRAMES" data-tooltip-desc="Total 29-bit extended CAN packets received from Terminator X Max.">Frames: 0</span>
+        <span id="stat-channels" data-tooltip-title="ACTIVE CHANNELS" data-tooltip-desc="Number of unique telemetry signals currently streaming.">Channels: 0</span>
+        <span id="stat-errors" data-tooltip-title="BUS ERRORS" data-tooltip-desc="Total CAN bus error frames recorded.">Errors: 0</span>
+        <span id="stat-uptime" data-tooltip-title="UPTIME" data-tooltip-desc="Elapsed time since telemetry listener initialization.">Uptime: 0s</span>
     </footer>
 
-    <script src="/static/dashboard.js"></script>
+    <!-- Global Floating Futuristic Tooltip Overlay -->
+    <div id="custom-tooltip" class="custom-tooltip" role="tooltip" aria-hidden="true" style="display: none;">
+        <div class="tooltip-header">
+            <span class="tooltip-icon">⚡</span>
+            <span class="tooltip-title"></span>
+        </div>
+        <div class="tooltip-desc"></div>
+        <div class="tooltip-hint"></div>
+    </div>
+
+    <script src="/static/dashboard.js?v=2.2"></script>
 </body>
 </html>

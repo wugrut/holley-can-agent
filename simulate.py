@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import signal
 import sys
 import struct
@@ -27,6 +28,13 @@ from holley_can.listener import CANListener
 from holley_can.storage import TimeSeriesStorage
 
 # ─── Logging Setup ───────────────────────────────────────────────────────────
+
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 logging.basicConfig(
     level=logging.INFO,
