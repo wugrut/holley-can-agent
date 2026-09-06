@@ -1,0 +1,29 @@
+channel_index,channel_name,label,category,base_can_id_hex,base_can_id_dec,value_a_signal,value_a_unit,value_a_min,value_a_max,value_a_data_type,value_a_byte_offset,value_a_byte_length,value_a_endian,value_b_signal,value_b_unit,value_b_data_type,value_b_byte_offset,value_b_byte_length,value_b_endian,notes
+1,rpm,RPM,ENGINE,0x1E005000,503336960,Engine Speed,rpm,0,8000,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,CAN ID = Base ID + (ECU_Serial & 0x7FF). Channel index in bits 24:14.
+2,map_kpa,MAP,ENGINE,0x1E009000,503353344,Manifold Absolute Pressure,kPa,0,400,IEEE754_Float32,0,4,BigEndian,Barometric Pressure,kPa,IEEE754_Float32,4,4,BigEndian,Boost (psi) = (MAP - Baro) * 0.145038
+3,tps,Throttle Position,ENGINE,0x1E00D000,503369728,Throttle Position,%,0,100,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,0 to 100 percent
+4,coolant_temp,Coolant Temp,TEMPERATURE,0x1E011000,503386112,Coolant Temperature,degF,-40,300,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Engine coolant sensor
+5,target_afr,Target AFR,FUELING,0x1E015000,503402496,Target Air-Fuel Ratio,AFR,10,20,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Commanded target AFR from fuel table
+6,afr_left,AFR Bank 1,FUELING,0x1E019000,503418880,Wideband AFR Bank 1 (Left),AFR,8,22,IEEE754_Float32,0,4,BigEndian,Sensor Status,,IEEE754_Float32,4,4,BigEndian,Primary wideband O2 sensor
+7,afr_right,AFR Bank 2,FUELING,0x1E01D000,503435264,Wideband AFR Bank 2 (Right),AFR,8,22,IEEE754_Float32,0,4,BigEndian,Sensor Status,,IEEE754_Float32,4,4,BigEndian,Secondary wideband O2 sensor (if equipped)
+8,afr_avg,AFR Average,FUELING,0x1E021000,503451648,Average Wideband AFR,AFR,8,22,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Averaged wideband reading
+9,air_temp_enrich,Air Temp Enrichment,FUELING,0x1E025000,503468032,Air Temp Enrichment,%,-100,100,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Fuel multiplier based on IAT
+10,coolant_enrich,Coolant Enrichment,FUELING,0x1E029000,503484416,Coolant Temp Enrichment,%,0,200,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Warm-up fuel enrichment percentage
+11,ignition_timing,Ignition Timing,IGNITION,0x1E02D000,503500800,Ignition Timing,degBTDC,-20,50,IEEE754_Float32,0,4,BigEndian,Knock Retard / Status,deg,IEEE754_Float32,4,4,BigEndian,Actual total spark advance
+12,battery_voltage,Battery Voltage,ELECTRICAL,0x1E031000,503517184,Battery Voltage,V,0,18,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Main ECU supply voltage
+13,current_learn,Fuel Learn,FUELING,0x1E035000,503533568,Closed Loop Fuel Learn,%,-50,50,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Active fuel trim learn table adjustment
+14,closed_loop,Closed Loop Status,FUELING,0x1E039000,503549952,Closed Loop Active Flag,flag,0,1,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,1.0 = Closed Loop Active; 0.0 = Open Loop
+15,iat,Intake Air Temp,TEMPERATURE,0x1E03D000,503566336,Intake Air Temperature,degF,-40,300,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Manifold air temperature sensor
+16,fuel_pw,Fuel Pulse Width,FUELING,0x1E041000,503582720,Injector Pulse Width,ms,0,25,IEEE754_Float32,0,4,BigEndian,Duty Cycle,%,IEEE754_Float32,4,4,BigEndian,Primary injector pulse width
+17,spark_advance,Spark Advance,IGNITION,0x1E045000,503599104,Base Spark Table Advance,deg,0,60,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Table spark timing before modifiers
+18,idle_speed,Target Idle,ENGINE,0x1E049000,503615488,Target Idle Speed,rpm,0,3000,IEEE754_Float32,0,4,BigEndian,IAC Position,%,IEEE754_Float32,4,4,BigEndian,ECU commanded idle RPM target
+19,fan_status,Fan Status,ELECTRICAL,0x1E04D000,503631872,Electric Fan 1 Status,flag,0,1,IEEE754_Float32,0,4,BigEndian,Electric Fan 2 Status,flag,IEEE754_Float32,4,4,BigEndian,1.0 = ON; 0.0 = OFF
+20,trans_gear,Current Gear,TRANSMISSION,0x1E051000,503648256,Current Transmission Gear,gear,0,4,IEEE754_Float32,0,4,BigEndian,Commanded Gear,gear,IEEE754_Float32,4,4,BigEndian,0 = Neutral/Park; 1..4 = Gears (Terminator X Max)
+21,trans_temp,Trans Temp,TRANSMISSION,0x1E055000,503664640,Transmission Fluid Temp,degF,-40,350,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,4L60E / 4L80E temperature sensor
+22,tcc_status,TCC Status,TRANSMISSION,0x1E059000,503681024,Torque Converter Lockup Duty,%,0,100,IEEE754_Float32,0,4,BigEndian,Converter Slip,rpm,IEEE754_Float32,4,4,BigEndian,TCC solenoid PWM duty cycle
+23,output_speed,Output Shaft Speed,TRANSMISSION,0x1E05D000,503697408,Transmission Output Speed,rpm,0,8000,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,VSS / Output speed sensor
+24,input_speed,Input Shaft Speed,TRANSMISSION,0x1E061000,503713792,Transmission Input Speed,rpm,0,8000,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Turbine shaft speed sensor
+25,line_pressure,Line Pressure,TRANSMISSION,0x1E065000,503730176,Trans Line Pressure Duty,%,0,100,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Electronic pressure control solenoid
+30,oil_pressure,Oil Pressure,ENGINE,0x1E079000,503812096,Engine Oil Pressure,psi,0,100,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Optional transducer input
+31,fuel_pressure,Fuel Pressure,FUELING,0x1E07D000,503828480,Fuel Rail Pressure,psi,0,100,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Optional transducer input
+32,vehicle_speed,Vehicle Speed,ENGINE,0x1E081000,503844864,Vehicle Speed,mph,0,200,IEEE754_Float32,0,4,BigEndian,Status / Reserved,,IEEE754_Float32,4,4,BigEndian,Calibrated ground speed

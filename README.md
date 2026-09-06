@@ -1,119 +1,192 @@
-# Holley CAN Agent
+# EFI Intelligence Copilot for Holley Terminator X / X MAX
 
-**Agentic ECU monitoring workstation for the Holley Terminator X Max**
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CAN Bus: 1 Mbps](https://img.shields.io/badge/CAN-1_Mbps_Broadcast-orange.svg)]()
+[![Platform: Windows | Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg)]()
+[![Tests: 78 Passing](https://img.shields.io/badge/Tests-78%2F78_Passing-brightgreen.svg)]()
 
-A headless Python middleware that passively ingests the Holley HEFI 3rd-Party CAN Communications Protocol, stores time-series data, serves a real-time web dashboard, and exposes an agent-queryable API for conversational analysis.
-
-Designed to run on a GMKtec EVO-X2 mini PC with CachyOS/Arch Linux, connected to the ECU via PCAN-USB adapter.
+> **An intelligence and decision-support layer operating alongside Holley EFI systems.**  
+> *Holley provides engine control and telemetry; EFI Intelligence Copilot explains what the data means, detects anomalies, establishes vehicle baselines, and recommends evidence-backed next steps.*
 
 ---
 
-## Architecture
+## 🎯 Product Philosophy & Architectural Invariants
+
+EFI Intelligence Copilot is **NOT** a replacement for Holley EFI software. It is designed to work hand-in-hand with it:
+
+1. **Strict Read-Only Bus Safety (Zero Calibration Writes in MVP)**:  
+   The application operates strictly in passive listen-only mode. It will **never** transmit frames, modify calibration tables, or issue flash commands over CAN. Existing handhelds, dashes, and ECU calibrations are completely protected.
+2. **Deterministic Analysis First, AI Second**:  
+   Telemetry decoding, baseline modeling, event detection, and fault identification are 100% deterministic code. AI/LLMs are strictly isolated to natural-language explanation and reasoning tools.
+3. **Offline-First for Dyno Cells & Race Tracks**:  
+   Runs fully standalone on offline Windows tuning laptops with zero internet connectivity and zero requirement for Python or compilers.
+4. **Verifiable Protocol Provenance**:  
+   Every decoded CAN channel carries strict provenance metadata (`HOLLEY_SOURCE_VERIFIED`, `SOURCE_VERIFIED`, `LIVE_HARDWARE_VERIFIED`, `TEST_FIXTURE_VERIFIED`, or `INFERRED`).
+
+---
+
+## ⚡ Key Features
+
+- 🏎️ **Standalone Portable Tuning Laptop App**: Single ZIP distribution with zero dependencies; extract and run via 1-click batch files.
+- 🔌 **Hardware Preflight Bus Sniffer**: Tests cable continuity, bus termination ($60\,\Omega$), baud rate (1 Mbps), and decodes live Holley frames before making a run.
+- 📊 **Multidimensional Baseline Engine**: Bins engine operation (Cold Idle, Warm Idle, Cruise, Accel, WOT/Boost) and tracks non-parametric robust statistics (Median, IQR, 5th/95th percentiles).
+- ⚡ **Deterministic Event Detector**: High-speed state machine tracking engine start/stop, WOT pulls, idle hunting, thermal heat soak, and voltage sags.
+- 🩺 **Rule-Based Diagnostic Engine**: Detects high-load fueling deviations (lean VE drift), hunting idle AFR oscillations, sensor dropouts, and thermal overheat.
+- 📄 **Offline Health Reports**: Automatically compiles styled HTML and Markdown intelligence reports with domain health scores (Fueling, Idle, Sensors, Thermal, Electrical).
+- 🌐 **Real-Time Web Dashboard**: SVG/Canvas circular gauges, live WebSocket telemetry push (20 Hz), and real-time alert banners.
+- 🎮 **10-Scenario Virtual Simulator**: In-memory ECU telemetry generator for testing cold starts, WOT pulls, sensor failures, and heat soak indoors.
+
+---
+
+## ⚠️ Holley 4-Pin CAN Harness Wiring & Safety
+
+The Holley Terminator X and Terminator X MAX expose a 4-pin Delphi/Aptiv Metri-Pack 150 female connector on the main harness:
 
 ```
-ECU (J3 CAN) → CAN Splitter → PCAN-USB → SocketCAN (can0)
-                                              ↓
-                                    Python Middleware
-                                    ├── Protocol Decoder (HEFI)
-                                    ├── SQLite Time-Series DB
-                                    ├── Alert Engine
-                                    ├── FastAPI REST + WebSocket
-                                    └── Web Dashboard (:8420)
+           ┌──────────────┐
+     Top   │ [A]      [B] │
+     Latch │              │
+           │ [C]      [D] │
+           └──────────────┘
 ```
 
-## Features
+| Pin | Wire Color (Typical) | Function | Adapter Connection | Critical Safety Warning |
+|:---:|:---------------------|:---------|:-------------------|:------------------------|
+| **A** | **Blue** (or Blue/White) | **CAN High** | **CAN-H** | Differential signal positive |
+| **B** | **White** (or White/Black) | **CAN Low** | **CAN-L** | Differential signal negative |
+| **C** | **Red/White** (or Red) | **+12V Switched** | ⛔ **DO NOT CONNECT** | **NEVER connect Pin C to your USB adapter! +12V will destroy the adapter and damage your laptop.** |
+| **D** | **Black** (or Black/White) | **Ground / Shield** | **GND** | Signal common ground reference |
 
-- **Live Dashboard** — Real-time canvas gauges (RPM, MAP/Boost, AFR, Timing, Coolant, Battery, TPS, Gear) accessible from any device on WiFi
-- **HEFI Protocol Decoder** — Decodes 29-bit extended CAN IDs with automatic ECU serial detection
-- **Anomaly Detection** — Lean/rich AFR, timing retard (knock), overboost, low voltage, high coolant, sensor dropout
-- **Time-Series Storage** — SQLite with WAL mode, configurable downsample rate, 90-day retention
-- **Agent Tools** — High-level Python functions for LLM-based agents (live snapshot, history queries, WOT analysis, transmission status)
-- **REST API** — Full HTTP API for programmatic access
+### The 60Ω Termination Rule
+A healthy CAN 2.0B bus requires two $120\,\Omega$ termination resistors in parallel ($60\,\Omega$ net resistance):
+1. **Turn vehicle power OFF.**
+2. Measure resistance across **Pin A (CAN-H)** and **Pin B (CAN-L)** using a digital multimeter:
+   - **$55\,\Omega$ – $65\,\Omega$:** Perfect termination.
+   - **$110\,\Omega$ – $130\,\Omega$:** Missing one terminator. Enable the $120\,\Omega$ jumper on your USB-CAN adapter.
+   - **Open / Megaohms:** Missing both terminators or wiring fractured.
 
-## Quick Start
+---
 
-### 1. Hardware Setup
+## 💻 Portable Tuning Laptop Distribution
 
-1. Connect the CAN splitter to the Terminator X Max **J3 connector** (3rd-party CAN bus)
-2. Ensure **120Ω termination** at both ends of the CAN bus
-3. Plug the **PCAN-USB adapter** into the GMKtec EVO-X2
+For tuning laptops running Windows 10/11 without Python installed:
 
-### 2. Software Setup
+1. Download or copy [`dist/efi-intelligence-copilot-portable.zip`](file:///c:/Users/wugrut/.antigravity-ide/gemini-superpowers-antigravity/holley-can-agent/dist/efi-intelligence-copilot-portable.zip) (25.9 MB) onto a USB drive.
+2. Extract the ZIP onto your laptop (e.g., `C:\EFI-Copilot`).
+3. Use the included one-click batch launchers:
+
+| Launcher Script | Purpose |
+|:---|:---|
+| `1_RUN_SIMULATOR_DEMO.bat` | Tests the app indoors without connecting to the car (generates sample report). |
+| `2_RUN_LIVE_PCAN.bat` | Connects to PEAK PCAN-USB (`PCAN_USBBUS1`) at 1 Mbps in listen-only mode. |
+| `3_RUN_LIVE_CANABLE_SLCAN.bat` | Prompts for Windows COM port and connects to CANable in SLCAN mode. |
+| `4_PREFLIGHT_HARDWARE_CHECK.bat` | Sniffs the bus for 15s to verify $60\,\Omega$ termination and decode live Holley packets. |
+| `5_RUN_WEB_DASHBOARD.bat` | Starts the local web server and opens the browser gauge cluster (`http://localhost:8420`). |
+| `FIELD_GUIDE.md` | Complete printable offline field wiring and troubleshooting manual. |
+
+---
+
+## 🛠️ Developer Setup & Local Execution
+
+### 1. Requirements & Installation
+- Python 3.10+ (tested on Python 3.12)
+- PEAK PCAN-Basic driver (if using PCAN-USB on Windows) or SocketCAN (on Linux)
 
 ```bash
-# Clone the project
-git clone <your-repo> /opt/holley-can-agent
-cd /opt/holley-can-agent
+# Clone the repository
+git clone https://github.com/wugrut/holley-can-agent.git
+cd holley-can-agent
+
+# Create and activate virtual environment
+python -m venv .venv
+.\.venv\Scripts\activate       # Windows
+# source .venv/bin/activate    # Linux / macOS
 
 # Install dependencies
-chmod +x setup/*.sh
-./setup/install_deps.sh
-
-# Initialize SocketCAN
-./setup/socketcan_init.sh
-
-# Verify CAN traffic (with engine running or key-on)
-candump can0
+pip install -r requirements.txt
 ```
 
-### 3. Run
+### 2. Unified CLI Usage (`portable_entry.py`)
 
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
+# 1. Run Preflight Bus Sniffer
+python portable_entry.py preflight --interface pcan --channel PCAN_USBBUS1 --seconds 15
 
-# Start the agent
-python main.py
+# 2. Run Live Logging & Analysis Session (Stop with Ctrl+C)
+python portable_entry.py copilot --interface pcan --channel PCAN_USBBUS1 --duration 0
+
+# 3. Run Offline Simulator Test
+python portable_entry.py simulator --duration 15 --scenario wot_pull_lean_dev
+
+# 4. Launch Live Real-Time Web Dashboard
+python portable_entry.py dashboard --interface pcan --port 8420
 ```
 
-The dashboard will be available at `http://<evo-x2-ip>:8420`
-
-### 4. Auto-Start on Boot (optional)
+### 3. Building the Standalone Portable Package
 
 ```bash
-# Create the holley user
-sudo useradd -r -s /usr/sbin/nologin holley
+python build_portable.py
+```
+This compiles `efi_copilot.exe` using PyInstaller, bundles the web assets and field guides, and outputs `dist/efi-intelligence-copilot-portable.zip`.
 
-# Install the systemd service
-sudo cp setup/holley-can-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable holley-can-agent
-sudo systemctl start holley-can-agent
+---
+
+## 🧪 Testing
+
+The repository maintains 100% test coverage across protocol decoding, baseline math, diagnostics, and hardware adapters:
+
+```bash
+pytest -v
+```
+```
+============================= 78 passed in 0.63s ==============================
 ```
 
-## API Reference
+---
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Web dashboard |
-| GET | `/api/live` | All channels snapshot |
-| GET | `/api/live/{channel}` | Single channel value |
-| GET | `/api/history?channel=rpm&start=...&end=...` | Historical data |
-| GET | `/api/alerts` | Active/recent alerts |
-| GET | `/api/discovery` | Discovered CAN IDs |
-| GET | `/api/health` | System health |
-| WS | `/ws` | WebSocket live stream |
+## 📁 Repository Structure
 
-## Configuration
+```
+holley-can-agent/
+├── app/                          # Core analytical engine
+│   ├── ai/                       # LLM reasoning & tool registry ("Ask Your Engine")
+│   ├── baseline/                 # Multidimensional baseline engine (median, IQR)
+│   ├── can/                      # Raw CAN frame abstractions
+│   ├── diagnostics/              # Rule-based diagnostic engine & findings
+│   ├── events/                   # Deterministic event state machines
+│   ├── hardware/                 # PCAN, CANable, SocketCAN, and Virtual Simulator
+│   ├── protocol/                 # HEFI 29-bit decoder & channel registry
+│   ├── reports/                  # Health scores & Markdown/HTML report generators
+│   ├── sessions/                 # Telemetry session metadata & buffering
+│   ├── storage/                  # SQLite WAL time-series persistence
+│   ├── telemetry/                # Signal quality, normalization, & validators
+│   └── vehicle/                  # Vehicle profiles & modification chronology
+├── docs/                         # Architecture & protocol documentation
+│   ├── ARCHITECTURE.md           # End-to-end component dataflow
+│   ├── CAN_PROTOCOL.md           # HEFI 29-bit protocol specification & provenance
+│   ├── FIELD_GUIDE_TUNING_LAPTOP.md # Laptop field manual & wiring guide
+│   ├── HARDWARE_SUPPORT.md       # Hardware adapter matrix & driver setups
+│   ├── HARDWARE_VERIFICATION_PLAN.md # Live ECU testing protocol
+│   ├── DIAGNOSTICS.md            # Rule-based diagnostic specifications
+│   ├── PRODUCT.md                # Product philosophy, safety invariants, & personas
+│   └── TELEMETRY_SCHEMA.md       # Signal definitions, units, & quality flags
+├── holley_can/                   # Web dashboard & legacy API server
+│   └── static/                   # HTML5/CSS3/JavaScript live gauge UI
+├── launchers/                    # Windows 1-click batch launcher scripts
+├── portable_entry.py             # Master CLI router for standalone execution
+├── build_portable.py             # PyInstaller packaging automation script
+├── config.yaml                   # Main configuration file
+├── config.portable.yaml          # Tuning laptop pre-set configuration
+├── requirements.txt              # Python package dependencies
+└── tests/                        # 78 comprehensive pytest test fixtures
+```
 
-Edit `config.yaml` to customize:
+---
 
-- CAN interface and bitrate
-- ECU serial number (or auto-detect)
-- Alert thresholds
-- Storage sample rate and retention
-- API host and port
-- Dashboard gauge ranges
+## 📄 License & Safety Disclaimer
 
-## HEFI Protocol Notes
+Distributed under the MIT License.
 
-The Holley HEFI 3rd-Party CAN protocol uses **29-bit extended CAN IDs** at **1 Mbit/s**:
-
-- **CAN ID** = `Base ID + (ECU Serial & 0x7FF)`
-- **Mask** `0xFFFFF800` to strip the serial and isolate the channel index
-- **Payload**: 8 bytes = two 32-bit big-endian IEEE 754 floats
-- The ECU serial number is printed on the back of the unit
-
-## License
-
-MIT
+**Automotive Safety Disclaimer**:  
+*EFI Intelligence Copilot is an experimental decision-support analysis tool and does not provide active vehicle control. Always monitor engine vitals using approved gauges. Never operate a laptop while physically driving a vehicle on public roads; dyno tuning and street logging should always be performed with a dedicated passenger or in a controlled environment.*

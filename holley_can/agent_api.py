@@ -31,7 +31,14 @@ from .storage import TimeSeriesStorage
 logger = logging.getLogger(__name__)
 
 # Directory for static files (dashboard)
-STATIC_DIR = Path(__file__).parent / "static"
+if getattr(sys, "frozen", False):
+    import os
+    base_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    STATIC_DIR = Path(base_dir) / "holley_can" / "static"
+    if not STATIC_DIR.exists():
+        STATIC_DIR = Path(sys.executable).parent / "holley_can" / "static"
+else:
+    STATIC_DIR = Path(__file__).parent / "static"
 
 
 class DashboardBroadcaster:

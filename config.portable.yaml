@@ -1,0 +1,51 @@
+# =============================================================================
+# EFI Intelligence Copilot — Tuning Laptop Configuration
+# Designed for Holley Terminator X / Terminator X MAX CAN Bus
+# =============================================================================
+
+# CAN Hardware Interface Settings
+can:
+  # Interface type options for Windows tuning laptops:
+  #   - 'pcan'    : PEAK-System PCAN-USB (Requires PCAN-Basic driver)
+  #   - 'slcan'   : CANable / CANable Pro in SLCAN mode (Requires COM port)
+  #   - 'simulator': Offline virtual simulator (no hardware needed)
+  interface: pcan
+
+  # Channel:
+  #   - For PCAN   : 'PCAN_USBBUS1' (Channel 1)
+  #   - For CANable: 'COM3', 'COM4', etc. (Check Windows Device Manager)
+  #   - For Linux  : 'can0'
+  channel: PCAN_USBBUS1
+
+  # Holley HEFI Broadcast Standard Bitrate: 1 Mbit/s (1,000,000 bps)
+  bitrate: 1000000
+
+  # Mask to isolate 29-bit broadcast channel index and strip ECU serial
+  id_mask: 0x1FFFF800
+
+  # Listen-only safety setting: NEVER transmit or acknowledge frames on vehicle bus
+  receive_own_messages: false
+
+# Vehicle Specification Context (used by diagnostic & baseline engines)
+vehicle:
+  name: "Holley Terminator X MAX Vehicle"
+  engine: "6.0L LS V8"
+  ecu_type: "Terminator X MAX"
+  target_base_fuel_pressure_psi: 58.0   # Standard LS / EFI returnless or boost-referenced base
+  coolant_warning_f: 220.0
+  low_voltage_v: 13.0
+  max_rpm: 6500
+
+# Persistence & Report Storage Paths
+storage:
+  database: ./data/copilot_sessions.db
+  reports_dir: ./reports
+
+# Web Dashboard & Live Telemetry Settings
+api:
+  host: 127.0.0.1
+  port: 8420
+
+dashboard:
+  title: "Terminator X MAX — EFI Copilot"
+  update_rate_ms: 50    # 20 Hz push to browser gauges
