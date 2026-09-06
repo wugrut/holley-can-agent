@@ -95,8 +95,11 @@ For tuning laptops running Windows 10/11 without Python installed:
 
 The live telemetry dashboard (`http://localhost:8420`) features interactive on-hover HUD cards for all buttons, toggles, and status indicators:
 
+![Dashboard Overview & HUD Tooltips](docs/images/dashboard_hud_tooltips.png)
+
 | Button / Control | Icon / State | Function & On-Hover Popup |
 |:---|:---|:---|
+| **AI Copilot** | `🤖 COPILOT` | Open the "Ask Your Engine" slide-over assistant to diagnose idle, fueling, boost, or active warnings. |
 | **Layout Selector** | `LAYOUT: [GRID ▾]` | Switch between preset gauge configurations: **Grid**, **Track**, and custom user layouts. |
 | **Edit Layout** | `EDIT` / `✓ DONE` | Enter touchscreen designer mode to drag-and-drop tiles, reorder gauges, or add new channels. |
 | **Diagnostic View** | `DIAG` | Toggle high-density tabular view displaying all raw decoded CAN broadcast channels in real-time. |
@@ -107,6 +110,27 @@ The live telemetry dashboard (`http://localhost:8420`) features interactive on-h
 | **Alarm Banner** | `✕` | Dismiss active warning or critical engine alarm notifications. |
 | **Drag Handle** | `⠿` | Grab to reorder and reposition gauge tiles across the cluster. |
 | **Add Custom Gauge** | `+` | Add new tiles for Oil Pressure, Fuel Pressure, Boost, Target AFR, etc. |
+
+---
+
+## 🤖 "Ask Your Engine" — Live AI Decision Support Copilot
+
+The AI Copilot brings expert EFI diagnostic reasoning directly into your web browser while the vehicle or simulator is running:
+
+![Live AI Copilot Drawer](docs/images/copilot_live_drawer.png)
+
+### Key Copilot Capabilities:
+1. **Live Telemetry Context Bar**: Displays real-time `RPM`, `AFR`, `MAP`, `LEARN`, and `CLT` values at the top of the chat panel.
+2. **1-Click Diagnostic Prompt Chips**:
+   - 🔍 **Idle Stability**: Evaluates idle AFR error, timing advance swings, and IAC stepper motor position recommendations.
+   - ⛽ **Fuel Learn & Trims**: Analyzes closed-loop learn percentage ($\pm 5\%$ safe window vs. base VE under-fueling).
+   - 📈 **Boost & AFR Safety**: Assesses manifold pressure in PSI, power enrichment AFR targets, and boost timing retard margins.
+   - 🚨 **Active Alarms**: Synthesizes active CAN bus safety alerts with root-cause troubleshooting advice.
+   - 🔋 **Battery & Voltage**: Diagnoses alternator charging and voltage stability (>13.0V required for stable injector latency).
+   - 📋 **Health Brief**: Produces an executive summary table of overall engine operating parameters.
+3. **Conversational Natural Language Input**: Type custom questions (e.g. *"Is my fuel learn table safe?"* or *"Why is my timing retarding under boost?"*) and receive empirical, telemetry-grounded guidance with zero guesswork.
+4. **Spoken Voice Output**: When Voice Alarms (`🔊`) are enabled, Copilot verbally summarizes the diagnosis.
+5. **100% Offline Capability**: Runs locally on track/dyno laptops using deterministic EFI domain rules; optionally connects to LLMs (Gemini / Claude / OpenAI) when an API key is provided.
 
 ---
 
