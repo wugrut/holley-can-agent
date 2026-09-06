@@ -683,6 +683,22 @@ document.addEventListener('visibilitychange', handleVisibilityChange);
 
 // ─── Run Logger Management ──────────────────────────────────────────────────
 
+function showToast(message, type = 'info', durationMs = 3500) {
+    let toast = document.getElementById('dashboard-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'dashboard-toast';
+        toast.className = 'dashboard-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.className = `dashboard-toast ${type} show`;
+    clearTimeout(toast._timeout);
+    toast._timeout = setTimeout(() => {
+        toast.className = 'dashboard-toast';
+    }, durationMs);
+}
+
 function initLogger() {
     const logToggleBtn = document.getElementById('btn-log-toggle');
     const logStatusText = document.getElementById('log-status-text');
@@ -702,26 +718,50 @@ function initLogger() {
         
     logToggleBtn.addEventListener('click', () => {
         if (!state.logging) {
-            // Start logging
-            const runName = prompt('Enter a name for this run session:', `Run_${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}`);
-            if (runName === null) return; // user cancelled
+            // Instant 1-Click Recording: generate timestamped run name
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+            const runName = `Run_${timeStr}`;
             
+            // Immediate optimistic UI update
+            updateLoggerUI(true, { name: runName });
+            showToast(`🔴 Telemetry recording started: ${runName}`, 'success');
+
+            if (state.voiceEnabled && window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Telemetry recording started"));
+            }
+
             fetch(`/api/log/start?name=${encodeURIComponent(runName)}`, { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'success') {
                         updateLoggerUI(true, { name: data.name });
+                    } else {
+                        updateLoggerUI(false, null);
+                        showToast(`Failed to start recording: ${data.message || 'Error'}`, 'error');
                     }
                 })
-                .catch(err => console.error('Error starting logger:', err));
+                .catch(err => {
+                    console.error('Error starting logger:', err);
+                    updateLoggerUI(false, null);
+                    showToast('Error starting logger', 'error');
+                });
         } else {
-            // Stop logging
+            // Stop logging immediately
+            updateLoggerUI(false, null);
+            showToast(`💾 Telemetry session saved. Click 'LOGS' to export CSV.`, 'success');
+
+            if (state.voiceEnabled && window.speechSynthesis) {
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance("Recording stopped and saved"));
+            }
+
             fetch('/api/log/stop', { method: 'POST' })
                 .then(res => res.json())
                 .then(data => {
-                    if (data.status === 'success') {
-                        updateLoggerUI(false, null);
-                        alert('Logging session stopped successfully.');
+                    if (data.status !== 'success') {
+                        console.warn('Stop logging response:', data);
                     }
                 })
                 .catch(err => console.error('Error stopping logger:', err));
