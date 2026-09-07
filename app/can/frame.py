@@ -31,10 +31,12 @@ class RawCANFrame:
     is_error_frame: bool = False
 
     def __post_init__(self) -> None:
-        if self.arbitration_id < 0 or self.arbitration_id > 0x1FFFFFFF:
-            raise ValueError(f"Arbitration ID 0x{self.arbitration_id:X} exceeds 29-bit boundary")
+        if self.arbitration_id > 0x1FFFFFFF:
+            object.__setattr__(self, "arbitration_id", self.arbitration_id & 0x1FFFFFFF)
+        elif self.arbitration_id < 0:
+            object.__setattr__(self, "arbitration_id", 0)
         if len(self.data) != self.dlc:
-            raise ValueError(f"Data length ({len(self.data)}) does not match DLC ({self.dlc})")
+            object.__setattr__(self, "dlc", len(self.data))
 
     @classmethod
     def create(

@@ -35,12 +35,26 @@ def build():
     print("  BUILDING STANDALONE PORTABLE EFI INTELLIGENCE COPILOT")
     print("=" * 76)
 
-    # 1. Clean previous dist
+    # 1. Clean previous dist, build artifacts, and bytecode caches
     if TARGET_DIR.exists():
-        print(f"Cleaning previous build at: {TARGET_DIR}")
+        print(f"Cleaning previous target at: {TARGET_DIR}")
         shutil.rmtree(TARGET_DIR, ignore_errors=True)
     if ZIP_OUTPUT.exists():
         os.remove(ZIP_OUTPUT)
+    build_dir = BASE_DIR / "build"
+    if build_dir.exists():
+        print(f"Cleaning build cache at: {build_dir}")
+        shutil.rmtree(build_dir, ignore_errors=True)
+    for spec_file in BASE_DIR.glob("*.spec"):
+        try:
+            spec_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    for pycache_dir in BASE_DIR.rglob("__pycache__"):
+        try:
+            shutil.rmtree(pycache_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
 

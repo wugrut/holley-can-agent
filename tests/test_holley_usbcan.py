@@ -82,6 +82,30 @@ class TestHolleyUsbCanParser:
         assert parsed_id == 0x1002AAB4
         assert parsed_id <= 0x1FFFFFFF
 
+    def test_parse_terminator_x_captured_ids(self) -> None:
+        """Verify real captured IDs 0x7000AAB4 (ch 2 MAP) and 0x70018124 (ch 6 AFR Left)."""
+        for raw_id, expected_clean, expected_ch in [
+            (0x7000AAB4, 0x1000AAB4, 2),
+            (0x70018124, 0x10018124, 6),
+        ]:
+            packet = USBC_MAGIC + struct.pack("<IB3s8s", raw_id, 8, b"\x00\x00\x00", b"\x00" * 8)
+            res = parse_holley_can_packet(packet)
+            assert res is not None
+            clean_id, dlc, _ = res
+            assert clean_id == expected_clean
+            assert (clean_id >> 14) & 0x7FF == expected_ch
+
+    def test_raw_can_frame_masks_firmware_flags(self) -> None:
+        """RawCANFrame should sanitize upper flags into valid 29-bit CAN ID without throwing ValueError."""
+        frame = RawCANFrame(
+            timestamp=100.0,
+            arbitration_id=0x7000AAB4,
+            data=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+        )
+        assert frame.arbitration_id == 0x1000AAB4
+        assert frame.arbitration_id <= 0x1FFFFFFF
+
+
 
 
 class TestHolleyUsbCanStreamProcessing:
