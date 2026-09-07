@@ -169,7 +169,11 @@ async def run_preflight(
     except (asyncio.CancelledError, KeyboardInterrupt):
         pass
     finally:
-        await adapter.disconnect()
+        final_status = adapter.get_status()
+        try:
+            await adapter.disconnect()
+        except Exception:
+            pass
         print("\n")
 
     # 3. Analyze Results & Print Diagnostic Report
@@ -179,40 +183,49 @@ async def run_preflight(
     print("═" * 76)
     print(f"  Interface Tested:       {interface} ({channel})")
     print(f"  Sniff Duration:         {duration:.1f} seconds")
-    print(f"  Total Frames Ingested:  {total_frames}")
-    print(f"  Error Frames Count:     {error_frames}")
-    print(f"  Unique 29-bit CAN IDs:  {len(frame_counts)}")
+    print(f"  USB Bytes Ingested:     {final_status.bytes_received:,} bytes")
+    print(f"  Raw Packets Seen:       {final_status.raw_packets_seen}")
+    print(f"  Valid CAN Frames:       {total_frames}")
+    print(f"  Malformed Packets:      {final_status.malformed_packets}")
+    print(f"  CAN Bus Error Frames:   {error_frames}")
+    print(f"  Unique CAN IDs Seen:    {len(frame_counts)}")
 
     if total_frames == 0:
-        print("\n🚨 CRITICAL: NO CAN FRAMES DETECTED ON BUS (0 frames received)")
-        print("\nPossible Causes & Action Items:")
-        if interface in ("holley", "holley_usbcan"):
-            print("  ⭐ NOTE: If your Holley Terminator X software already communicates with the ECU over this cable,")
-            print("     your harness wiring, pinout, and bus termination are ALREADY CORRECT. No resistors needed!")
-            print("  1. Ignition Switch in RUN: Turn vehicle ignition switch to RUN / ON (ECU needs 12V power).")
-            print("  2. Holley CAN Broadcast Disabled:")
-            print("     - Open Holley Terminator X Software -> System Setup -> CAN Devices.")
-            print("     - Verify 'Enable CAN Broadcast' (or Racepak broadcast at 1 Mbps) is turned ON.")
-            print("     - Send updated calibration to ECU, then cycle ignition switch.")
-            print("  3. Close Holley Tuning Software:")
-            print("     - Windows WinUSB enforces exclusive hardware access by one program at a time.")
-            print("     - Make sure Holley Terminator X software is completely closed.")
+        if final_status.bytes_received > 0:
+            print("\n⚠️ USB STREAM ACTIVITY DETECTED, BUT ZERO VALID CAN FRAMES DECODED")
+            print(f"  - USB Stream Ingested: {final_status.bytes_received:,} bytes ({final_status.raw_packets_seen} candidate packets).")
+            print(f"  - Malformed/Unparsed:  {final_status.malformed_packets} packets.")
+            print("  Action: Enable raw diagnostic mode with 'set HOLLEY_DEBUG_RAW_PACKETS=1' to inspect wire frames.")
         else:
-            print("  1. Ignition Switch OFF: Turn vehicle ignition switch to RUN / ON (ECU needs 12V power).")
-            print("  2. Holley CAN Broadcast Disabled:")
-            print("     - Open Holley Terminator X Software -> System Setup -> CAN Devices.")
-            print("     - Verify 'Enable CAN Broadcast' (or Racepak broadcast) is turned ON.")
-            print("  3. Wiring Pinout Disconnect (Holley 4-pin Metri-Pack connector):")
-            print("     - Pin A: Blue (CAN High) -> Connect to CAN-H on adapter")
-            print("     - Pin B: White (CAN Low) -> Connect to CAN-L on adapter")
-            print("     - Pin C: Red/White (+12V Power) -> DO NOT CONNECT TO DONGLE!")
-            print("     - Pin D: Black (Ground / Shield) -> Connect to GND on adapter")
-            print("  4. Bus Termination Resistor Missing (Only needed for generic/raw CAN adapters):")
-            print("     - Turn vehicle power OFF.")
-            print("     - Measure resistance between CAN-H (Pin A) and CAN-L (Pin B) using a multimeter.")
-            print("     - Normal Reading: 55Ω to 65Ω (nominally 60Ω from two parallel 120Ω resistors).")
-            print("     - If reading is ~120Ω: One terminator is missing. Enable 120Ω jumper on your USB-CAN adapter.")
-            print("     - If reading is OPEN / Megaohms: Both terminators missing or wiring broken.")
+            print("\n🚨 CRITICAL: NO CAN FRAMES DETECTED ON BUS (0 bytes / 0 frames received)")
+            print("\nPossible Causes & Action Items:")
+            if interface in ("holley", "holley_usbcan"):
+                print("  ⭐ NOTE: If your Holley Terminator X software already communicates with the ECU over this cable,")
+                print("     your harness wiring, pinout, and bus termination are ALREADY CORRECT. No resistors needed!")
+                print("  1. Ignition Switch in RUN: Turn vehicle ignition switch to RUN / ON (ECU needs 12V power).")
+                print("  2. Holley CAN Broadcast Disabled:")
+                print("     - Open Holley Terminator X Software -> System Setup -> CAN Devices.")
+                print("     - Verify 'Enable CAN Broadcast' (or Racepak broadcast at 1 Mbps) is turned ON.")
+                print("     - Send updated calibration to ECU, then cycle ignition switch.")
+                print("  3. Close Holley Tuning Software:")
+                print("     - Windows WinUSB enforces exclusive hardware access by one program at a time.")
+                print("     - Make sure Holley Terminator X software is completely closed.")
+            else:
+                print("  1. Ignition Switch OFF: Turn vehicle ignition switch to RUN / ON (ECU needs 12V power).")
+                print("  2. Holley CAN Broadcast Disabled:")
+                print("     - Open Holley Terminator X Software -> System Setup -> CAN Devices.")
+                print("     - Verify 'Enable CAN Broadcast' (or Racepak broadcast) is turned ON.")
+                print("  3. Wiring Pinout Disconnect (Holley 4-pin Metri-Pack connector):")
+                print("     - Pin A: Blue (CAN High) -> Connect to CAN-H on adapter")
+                print("     - Pin B: White (CAN Low) -> Connect to CAN-L on adapter")
+                print("     - Pin C: Red/White (+12V Power) -> DO NOT CONNECT TO DONGLE!")
+                print("     - Pin D: Black (Ground / Shield) -> Connect to GND on adapter")
+                print("  4. Bus Termination Resistor Missing (Only needed for generic/raw CAN adapters):")
+                print("     - Turn vehicle power OFF.")
+                print("     - Measure resistance between CAN-H (Pin A) and CAN-L (Pin B) using a multimeter.")
+                print("     - Normal Reading: 55Ω to 65Ω (nominally 60Ω from two parallel 120Ω resistors).")
+                print("     - If reading is ~120Ω: One terminator is missing. Enable 120Ω jumper on your USB-CAN adapter.")
+                print("     - If reading is OPEN / Megaohms: Both terminators missing or wiring broken.")
     elif error_frames > total_frames * 0.1:
         print("\n⚠️ WARNING: HIGH CAN BUS ERROR RATE DETECTED")
         print(f"  Error frames account for {error_frames / total_frames * 100:.1f}% of traffic.")

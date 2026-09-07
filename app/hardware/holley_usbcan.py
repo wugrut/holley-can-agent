@@ -12,9 +12,10 @@ import asyncio
 import logging
 import struct
 import sys
+import os
 import threading
 import time
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 from app.can.frame import RawCANFrame
 from app.hardware.interface import ConnectionState, ConnectionStatus, HardwareInterface
@@ -107,6 +108,15 @@ if sys.platform == "win32":
             ("Length", wintypes.WORD),
         ]
 
+    class OVERLAPPED(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_ulong),
+            ("InternalHigh", ctypes.c_ulong),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
     # Bind SetupAPI
     try:
         setupapi = ctypes.windll.setupapi
@@ -157,6 +167,10 @@ if sys.platform == "win32":
         kernel32.CreateFileW.restype = wintypes.HANDLE
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateEventW.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
     except Exception as exc:
         logger.debug("Could not bind Kernel32: %s", exc)
 
@@ -222,6 +236,14 @@ if sys.platform == "win32":
             ctypes.c_void_p,
         ]
         winusb.WinUsb_WritePipe.restype = wintypes.BOOL
+
+        winusb.WinUsb_GetOverlappedResult.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.BOOL,
+        ]
+        winusb.WinUsb_GetOverlappedResult.restype = wintypes.BOOL
     except Exception as exc:
         logger.debug("Could not bind WinUSB: %s", exc)
 
@@ -277,27 +299,66 @@ def enumerate_holley_devices(present_only: bool = True) -> List[str]:
     return paths
 
 
-def parse_holley_can_packet(packet: bytes) -> Optional[tuple[int, int, bytes]]:
+class ParsedHolleyPacket(NamedTuple):
     """
-    Parse a 20-byte Holley CAN packet.
-    Returns (arbitration_id, dlc, payload_data) or None if invalid.
+    Decoded representation of a 20-byte Holley USB-CAN bulk record.
+    
+    Fields:
+        arbitration_id: Normalized CAN arbitration ID (29-bit or 11-bit).
+        dlc: CAN Data Length Code (0 to 8).
+        payload: Up to 8 bytes of CAN data payload.
+        is_extended: True for 29-bit extended frame, False for 11-bit standard frame.
+    """
+    arbitration_id: int
+    dlc: int
+    payload: bytes
+    is_extended: bool = True
+
+
+def parse_holley_can_packet(packet: bytes) -> Optional[ParsedHolleyPacket]:
+    """
+    Parse a 20-byte Holley CAN packet from the USB stream.
+    
+    Byte layout verified from official Holley USBCAN-Driver.dll and Terminator X.exe:
+      Bytes 0..3:   ASCII Magic b"USBC" (0x55, 0x53, 0x42, 0x43)
+      Bytes 4..7:   Microcontroller CAN ID Word (uint32 LE):
+                    - Bit 2: IDE (Identifier Extension flag, 1=29-bit Extended, 0=11-bit Standard)
+                    - Bits 3..31: CAN Arbitration ID shifted left by 3 bits
+                      * Extended (IDE=1): can_id = (raw_id_word >> 3) & 0x1FFFFFFF
+                      * Standard (IDE=0): can_id = (raw_id_word >> 21) & 0x7FF (fallback (raw_id_word >> 3) & 0x7FF)
+      Byte 8:       DLC (uint8, 0..8)
+      Bytes 9..11:  Reserved/padding (3 bytes)
+      Bytes 12..19: CAN Payload data (8 bytes)
+
+    Returns:
+        ParsedHolleyPacket if packet is structurally and semantically valid, else None.
     """
     if len(packet) != PACKET_SIZE or not packet.startswith(USBC_MAGIC):
         return None
 
-    # Packet layout:
-    # 0..3:  b"USBC" (magic)
-    # 4..7:  CAN ID (uint32 little-endian)
-    # 8:     DLC (uint8)
-    # 9..11: padding / flags (3 bytes)
-    # 12..19: payload data (8 bytes)
     try:
-        header, raw_can_id, dlc, pad, payload = struct.unpack("<4sIB3s8s", packet)
+        header, raw_id_word, dlc, pad, payload = struct.unpack("<4sIB3s8s", packet)
         if dlc > 8:
-            dlc = 8
-        # Mask out dongle firmware flags (bits 29..31) to isolate 29-bit CAN arbitration ID
-        can_id = raw_can_id & 0x1FFFFFFF
-        return can_id, dlc, payload[:dlc]
+            return None
+
+        is_extended = bool((raw_id_word >> 2) & 1)
+        if is_extended:
+            can_id = (raw_id_word >> 3) & 0x1FFFFFFF
+            if can_id < 0 or can_id > 0x1FFFFFFF:
+                return None
+        else:
+            can_id = (raw_id_word >> 21) & 0x7FF
+            if can_id == 0:
+                can_id = (raw_id_word >> 3) & 0x7FF
+            if can_id < 0 or can_id > 0x7FF:
+                return None
+
+        return ParsedHolleyPacket(
+            arbitration_id=can_id,
+            dlc=dlc,
+            payload=payload[:dlc],
+            is_extended=is_extended,
+        )
     except Exception:
         return None
 
@@ -339,6 +400,7 @@ class HolleyUsbCanAdapter(HardwareInterface):
         self._queue: Optional[asyncio.Queue[RawCANFrame]] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stream_buffer = bytearray()
+        self._debug_raw_packets = os.environ.get("HOLLEY_DEBUG_RAW_PACKETS", "").strip() in ("1", "true", "TRUE")
 
     def is_connected(self) -> bool:
         return (
@@ -491,19 +553,46 @@ class HolleyUsbCanAdapter(HardwareInterface):
         setup = WINUSB_SETUP_PACKET(
             RequestType=0x40,  # Host-to-Device | Vendor | Device
             Request=0x00,
-            Value=0x0222,      # Baud rate selection command
+            Value=0x0222,      # Baud rate selection command (0x0222 in USBCAN-Driver.dll)
             Index=0x0000,
             Length=4,
         )
         rate_data = (ctypes.c_uint32)(self.bitrate)
         transferred = wintypes.DWORD(0)
 
+        # Create manual-reset event for overlapped control transfer (matching CUsbCanDriver::SetSpeed)
+        h_event = kernel32.CreateEventW(None, True, False, None)
+        overlapped = OVERLAPPED()
+        overlapped.hEvent = h_event
+
         res = winusb.WinUsb_ControlTransfer(
-            h_winusb, setup, ctypes.byref(rate_data), 4, ctypes.byref(transferred), None
+            h_winusb, setup, ctypes.byref(rate_data), 4, None, ctypes.byref(overlapped)
         )
         if not res:
             err = kernel32.GetLastError()
-            logger.warning("WinUsb_ControlTransfer for bitrate returned %d (continuing anyway)", err)
+            if err == 997:  # ERROR_IO_PENDING
+                wait_res = kernel32.WaitForSingleObject(h_event, 500)
+                if wait_res == 0:  # WAIT_OBJECT_0
+                    winusb.WinUsb_GetOverlappedResult(
+                        h_winusb, ctypes.byref(overlapped), ctypes.byref(transferred), False
+                    )
+                else:
+                    err = kernel32.GetLastError()
+
+            # Characterize error 121 (ERROR_SEM_TIMEOUT) or non-zero error:
+            if err == 121:
+                logger.info(
+                    "Holley adapter bitrate control transfer timed out (Win32 Error 121: ERROR_SEM_TIMEOUT). "
+                    "Hardware operates at factory default 1,000,000 bps."
+                )
+            elif err not in (0, 997):
+                logger.warning(
+                    "WinUsb_ControlTransfer for bitrate returned Win32 error %d. "
+                    "Continuing at hardware default bitrate (1,000,000 bps).",
+                    err,
+                )
+        if h_event:
+            kernel32.CloseHandle(h_event)
 
         return True
 
@@ -513,42 +602,45 @@ class HolleyUsbCanAdapter(HardwareInterface):
         read_buf = ctypes.create_string_buffer(buf_size)
         bytes_transferred = wintypes.DWORD(0)
 
+        self._status.reader_alive = True
         logger.debug("HolleyUsbCan reader worker started.")
-        while not self._stop_event.is_set():
-            if not self._h_winusb or self._in_pipe_id is None:
-                break
-
-            success = winusb.WinUsb_ReadPipe(
-                self._h_winusb,
-                self._in_pipe_id,
-                read_buf,
-                buf_size,
-                ctypes.byref(bytes_transferred),
-                None,
-            )
-
-            if success and bytes_transferred.value > 0:
-                chunk = read_buf.raw[: bytes_transferred.value]
-                self._status.bytes_received += len(chunk)
-                try:
-                    self._process_stream_chunk(chunk)
-                except Exception as chunk_err:
-                    logger.warning("Error processing stream chunk: %s", chunk_err)
-            else:
-                err = kernel32.GetLastError()
-                # Error 1167 (ERROR_DEVICE_NOT_CONNECTED) or 121 (ERROR_SEM_TIMEOUT)
-                if err == 1167:  # Device unplugged
-                    logger.warning("Holley USB cable was disconnected.")
-                    self._status.state = ConnectionState.RECONNECTING
-                    self._status.error_message = "USB cable was unplugged."
+        try:
+            while not self._stop_event.is_set():
+                if not self._h_winusb or self._in_pipe_id is None:
                     break
-                elif err == 121:  # Semaphore timeout (normal idle on quiet bus)
-                    continue
-                else:
-                    # Brief sleep to avoid spinning on unexpected transient error
-                    time.sleep(0.01)
 
-        logger.debug("HolleyUsbCan reader worker exiting.")
+                success = winusb.WinUsb_ReadPipe(
+                    self._h_winusb,
+                    self._in_pipe_id,
+                    read_buf,
+                    buf_size,
+                    ctypes.byref(bytes_transferred),
+                    None,
+                )
+
+                if success and bytes_transferred.value > 0:
+                    chunk = read_buf.raw[: bytes_transferred.value]
+                    self._status.bytes_received += len(chunk)
+                    try:
+                        self._process_stream_chunk(chunk)
+                    except Exception as chunk_err:
+                        logger.warning("Error processing stream chunk: %s", chunk_err)
+                else:
+                    err = kernel32.GetLastError()
+                    # Error 1167 (ERROR_DEVICE_NOT_CONNECTED) or 121 (ERROR_SEM_TIMEOUT)
+                    if err == 1167:  # Device unplugged
+                        logger.warning("Holley USB cable was disconnected.")
+                        self._status.state = ConnectionState.RECONNECTING
+                        self._status.error_message = "USB cable was unplugged."
+                        break
+                    elif err == 121:  # Semaphore timeout (normal idle on quiet bus)
+                        continue
+                    else:
+                        # Brief sleep to avoid spinning on unexpected transient error
+                        time.sleep(0.01)
+        finally:
+            self._status.reader_alive = False
+            logger.debug("HolleyUsbCan reader worker exiting.")
 
     def _process_stream_chunk(self, chunk: bytes) -> None:
         """Appends chunk to buffer, synchronizes to USBC magic, and dispatches frames."""
@@ -572,11 +664,31 @@ class HolleyUsbCanAdapter(HardwareInterface):
 
             packet = bytes(self._stream_buffer[:PACKET_SIZE])
             del self._stream_buffer[:PACKET_SIZE]
+            self._status.raw_packets_seen += 1
+
+            if self._debug_raw_packets:
+                logger.info(
+                    "RAW USB PACKET (%d bytes): %s",
+                    len(packet),
+                    " ".join(f"{b:02X}" for b in packet),
+                )
 
             parsed = parse_holley_can_packet(packet)
             if parsed is not None:
-                can_id, dlc, payload = parsed
-                can_id = can_id & 0x1FFFFFFF
+                can_id = parsed.arbitration_id
+                dlc = parsed.dlc
+                payload = parsed.payload
+                is_extended = parsed.is_extended
+
+                if self._debug_raw_packets:
+                    logger.info(
+                        "  -> Decoded Frame: CAN_ID=0x%08X (extended=%s) DLC=%d Payload=%s",
+                        can_id,
+                        is_extended,
+                        dlc,
+                        " ".join(f"{b:02X}" for b in payload),
+                    )
+
                 try:
                     frame = RawCANFrame(
                         timestamp=time.time(),
@@ -584,7 +696,7 @@ class HolleyUsbCanAdapter(HardwareInterface):
                         data=payload,
                         dlc=dlc,
                         channel=self.channel,
-                        is_extended_id=True,
+                        is_extended_id=is_extended,
                         is_error_frame=False,
                     )
                     self._status.frames_received += 1
@@ -597,9 +709,13 @@ class HolleyUsbCanAdapter(HardwareInterface):
                             pass
                 except Exception as frame_err:
                     logger.warning("Error creating RawCANFrame: %s", frame_err)
-                    self._status.error_frames += 1
+                    self._status.malformed_packets += 1
             else:
-                self._status.error_frames += 1
+                self._status.malformed_packets += 1
+                logger.warning(
+                    "Discarded malformed CAN packet: raw=%s",
+                    " ".join(f"{b:02X}" for b in packet),
+                )
 
     def _enqueue_frame(self, frame: RawCANFrame) -> None:
         """Helper to enqueue frame from thread-safe callback."""

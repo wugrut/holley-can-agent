@@ -33,6 +33,9 @@ class ConnectionStatus:
     frames_dropped: int = 0
     error_frames: int = 0
     bytes_received: int = 0
+    raw_packets_seen: int = 0
+    malformed_packets: int = 0
+    reader_alive: bool = False
     last_frame_time: float | None = None
     error_message: str | None = None
 

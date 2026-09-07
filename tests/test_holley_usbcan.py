@@ -28,39 +28,56 @@ from app.storage.database import Database
 from app.storage.repository import TelemetryRepository
 
 
-def create_test_packet(can_id: int, dlc: int, payload: bytes) -> bytes:
-    """Helper to assemble a valid 20-byte Holley CAN frame packet."""
+def create_test_packet(can_id: int, dlc: int, payload: bytes, is_extended: bool = True) -> bytes:
+    """Helper to assemble a valid 20-byte Holley CAN frame packet with microcontroller framing."""
     padded_payload = payload.ljust(8, b"\x00")[:8]
-    return USBC_MAGIC + struct.pack("<IB3s8s", can_id, dlc, b"\x00\x00\x00", padded_payload)
+    if is_extended:
+        id_word = (can_id << 3) | 0x04
+    else:
+        id_word = (can_id << 21) & 0xFFE00000
+    return USBC_MAGIC + struct.pack("<IB3s8s", id_word, dlc, b"\x00\x00\x00", padded_payload)
 
 
 class TestHolleyUsbCanParser:
     """Tests for raw byte frame synchronization and parsing."""
 
-    def test_parse_valid_packet(self) -> None:
+    def test_parse_valid_29bit_extended_packet(self) -> None:
         can_id = 0x1E010020
         payload = bytes([0x10, 0x27, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00])
-        packet = create_test_packet(can_id, 8, payload)
+        packet = create_test_packet(can_id, 8, payload, is_extended=True)
 
         assert len(packet) == PACKET_SIZE
         result = parse_holley_can_packet(packet)
         assert result is not None
-        parsed_id, parsed_dlc, parsed_data = result
-        assert parsed_id == can_id
-        assert parsed_dlc == 8
-        assert parsed_data == payload
+        assert result.arbitration_id == can_id
+        assert result.dlc == 8
+        assert result.payload == payload
+        assert result.is_extended is True
+
+    def test_parse_valid_11bit_standard_packet(self) -> None:
+        can_id = 0x7DF
+        payload = bytes([0x02, 0x01, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00])
+        packet = create_test_packet(can_id, 8, payload, is_extended=False)
+
+        assert len(packet) == PACKET_SIZE
+        result = parse_holley_can_packet(packet)
+        assert result is not None
+        assert result.arbitration_id == can_id
+        assert result.dlc == 8
+        assert result.payload == payload
+        assert result.is_extended is False
 
     def test_parse_short_payload(self) -> None:
         can_id = 0x1E001234
         payload = bytes([0xAA, 0xBB, 0xCC, 0xDD])
-        packet = create_test_packet(can_id, 4, payload)
+        packet = create_test_packet(can_id, 4, payload, is_extended=True)
 
         result = parse_holley_can_packet(packet)
         assert result is not None
-        parsed_id, parsed_dlc, parsed_data = result
-        assert parsed_id == can_id
-        assert parsed_dlc == 4
-        assert parsed_data == payload
+        assert result.arbitration_id == can_id
+        assert result.dlc == 4
+        assert result.payload == payload
+        assert result.is_extended is True
 
     def test_parse_invalid_magic(self) -> None:
         packet = b"XXXX" + struct.pack("<IB3s8s", 0x100, 8, b"\x00\x00\x00", b"\x00" * 8)
@@ -70,40 +87,72 @@ class TestHolleyUsbCanParser:
         packet = b"USBC\x01\x02"
         assert parse_holley_can_packet(packet) is None
 
-    def test_parse_real_hardware_packet_with_firmware_flags(self) -> None:
-        """Physical Holley dongles tag raw frames with upper flags (0x70000000)."""
-        raw_id = 0x7002AAB4  # Real packet captured from vehicle Terminator X
-        payload = bytes([0x41, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
-        packet = USBC_MAGIC + struct.pack("<IB3s8s", raw_id, 8, b"\x00\x00\x00", payload)
+    def test_usb_packet_protocol_metadata_framing(self) -> None:
+        """
+        Microcontroller protocol metadata:
+        Bit 2 is IDE flag (1=extended, 0=standard).
+        Bits 3..31 contain the 29-bit CAN ID shifted left by 3.
+        """
+        can_id = 0x1E004556  # Channel 1 RPM for serial 0x556
+        raw_word = (can_id << 3) | 0x04
+        packet = USBC_MAGIC + struct.pack("<IB3s8s", raw_word, 8, b"\x00\x00\x00", b"\x00" * 8)
+        parsed = parse_holley_can_packet(packet)
+        assert parsed is not None
+        assert parsed.arbitration_id == can_id
+        assert parsed.is_extended is True
 
-        result = parse_holley_can_packet(packet)
-        assert result is not None
-        parsed_id, parsed_dlc, parsed_data = result
-        assert parsed_id == 0x1002AAB4
-        assert parsed_id <= 0x1FFFFFFF
+    def test_exact_captured_failure_values_terminator_x(self) -> None:
+        """
+        Verify the exact values captured from the vehicle: 0x7000AAB4 and 0x70018124.
+        
+        Proof:
+        0x7000AAB4:
+          IDE flag: (0x7000AAB4 >> 2) & 1 == 1 (Extended)
+          CAN ID:   (0x7000AAB4 >> 3) & 0x1FFFFFFF == 0x0E001556
+          Target:   (0x0E001556 >> 25) & 7 == 7 (Broadcast target)
+          Cmd bit:  (0x0E001556 >> 28) & 1 == 0 (Command/Heartbeat)
+          Source:   (0x0E001556 >> 11) & 7 == 2 (SOURCE_ECU)
+          Serial:   0x0E001556 & 0x7FF == 0x556 (ECU Serial # 1366)
+          
+        0x70018124:
+          IDE flag: (0x70018124 >> 2) & 1 == 1 (Extended)
+          CAN ID:   (0x70018124 >> 3) & 0x1FFFFFFF == 0x0E003024
+          Target:   (0x0E003024 >> 25) & 7 == 7 (Broadcast target)
+          Serial:   0x0E003024 & 0x7FF == 0x024
+        """
+        packet1 = USBC_MAGIC + struct.pack("<IB3s8s", 0x7000AAB4, 8, b"\x00\x00\x00", b"\x11" * 8)
+        p1 = parse_holley_can_packet(packet1)
+        assert p1 is not None
+        assert p1.is_extended is True
+        assert p1.arbitration_id == 0x0E001556
+        assert (p1.arbitration_id >> 25) & 7 == 7
+        assert (p1.arbitration_id >> 11) & 7 == 2
+        assert p1.arbitration_id & 0x7FF == 0x556
 
-    def test_parse_terminator_x_captured_ids(self) -> None:
-        """Verify real captured IDs 0x7000AAB4 (ch 2 MAP) and 0x70018124 (ch 6 AFR Left)."""
-        for raw_id, expected_clean, expected_ch in [
-            (0x7000AAB4, 0x1000AAB4, 2),
-            (0x70018124, 0x10018124, 6),
-        ]:
-            packet = USBC_MAGIC + struct.pack("<IB3s8s", raw_id, 8, b"\x00\x00\x00", b"\x00" * 8)
-            res = parse_holley_can_packet(packet)
-            assert res is not None
-            clean_id, dlc, _ = res
-            assert clean_id == expected_clean
-            assert (clean_id >> 14) & 0x7FF == expected_ch
+        packet2 = USBC_MAGIC + struct.pack("<IB3s8s", 0x70018124, 8, b"\x00\x00\x00", b"\x22" * 8)
+        p2 = parse_holley_can_packet(packet2)
+        assert p2 is not None
+        assert p2.is_extended is True
+        assert p2.arbitration_id == 0x0E003024
+        assert p2.arbitration_id & 0x7FF == 0x024
 
-    def test_raw_can_frame_masks_firmware_flags(self) -> None:
-        """RawCANFrame should sanitize upper flags into valid 29-bit CAN ID without throwing ValueError."""
-        frame = RawCANFrame(
-            timestamp=100.0,
-            arbitration_id=0x7000AAB4,
-            data=b"\x01\x02\x03\x04\x05\x06\x07\x08",
-        )
-        assert frame.arbitration_id == 0x1000AAB4
-        assert frame.arbitration_id <= 0x1FFFFFFF
+    def test_raw_can_frame_rejects_raw_undecoded_words(self) -> None:
+        """RawCANFrame strictly enforces 29-bit boundary and rejects raw microcontroller words."""
+        import pytest
+        with pytest.raises(ValueError, match="exceeds 29-bit boundary"):
+            RawCANFrame(
+                timestamp=100.0,
+                arbitration_id=0x7000AAB4,
+                data=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+            )
+
+        with pytest.raises(ValueError, match="exceeds 11-bit standard boundary"):
+            RawCANFrame(
+                timestamp=100.0,
+                arbitration_id=0x800,
+                data=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+                is_extended_id=False,
+            )
 
 
 
@@ -161,6 +210,31 @@ class TestHolleyUsbCanStreamProcessing:
         assert len(adapter._stream_buffer) == 3
         assert adapter._status.frames_received == 0
 
+    def test_reader_recovery_after_malformed_packet(self) -> None:
+        """Malformed packet is safely discarded and subsequent valid packets are processed without thread failure."""
+        adapter = HolleyUsbCanAdapter()
+        # Invalid packet: bad DLC and corrupt format
+        bad_packet = b"USBC" + b"\xFF" * 16
+        good_packet = create_test_packet(0x1E010001, 8, b"\x42" * 8, is_extended=True)
+
+        adapter._process_stream_chunk(bad_packet + good_packet)
+        assert adapter._status.malformed_packets == 1
+        assert adapter._status.frames_received == 1
+        assert len(adapter._stream_buffer) == 0
+
+    def test_empty_usb_read(self) -> None:
+        """Empty USB chunk does not alter buffer or throw errors."""
+        adapter = HolleyUsbCanAdapter()
+        adapter._process_stream_chunk(b"")
+        assert adapter._status.frames_received == 0
+        assert adapter._status.malformed_packets == 0
+        assert len(adapter._stream_buffer) == 0
+
+    def test_unknown_packet_type(self) -> None:
+        """Unknown or unhandled magic headers are rejected gracefully."""
+        bad_magic_packet = b"WIFI" + struct.pack("<IB3s8s", 0x100, 8, b"\x00\x00\x00", b"\x00" * 8)
+        assert parse_holley_can_packet(bad_magic_packet) is None
+
 
 class TestHolleyUsbCanSafety:
     """[SAFETY INVARIANT TESTS] Enforce passive/listen-only behavior."""
@@ -203,6 +277,27 @@ class TestHolleyUsbCanSafety:
         adapter = HolleyUsbCanAdapter()
         frame = asyncio.run(adapter.receive(timeout=0.01))
         assert frame is None
+
+    def test_usb_transport_error_simulation(self) -> None:
+        """Verifies state transition when simulated USB transport error occurs."""
+        adapter = HolleyUsbCanAdapter()
+        adapter._h_winusb = 12345
+        adapter._status.state = ConnectionState.CONNECTED
+        assert adapter.is_connected()
+
+        # Simulate unplug / transport failure
+        adapter._status.state = ConnectionState.RECONNECTING
+        adapter._status.error_message = "USB cable was unplugged."
+        assert not adapter.is_connected()
+        assert adapter.get_status().state == ConnectionState.RECONNECTING
+
+    def test_adapter_disconnect_reconnect_lifecycle(self) -> None:
+        """Disconnect clears WinUSB handle and sets state to DISCONNECTED."""
+        adapter = HolleyUsbCanAdapter()
+        asyncio.run(adapter.disconnect())
+        assert adapter.get_status().state == ConnectionState.DISCONNECTED
+        assert adapter._h_winusb is None
+        assert adapter._thread is None
 
 
 class TestHolleyUsbCanDetectionMocked:

@@ -54,17 +54,19 @@ Inspecting the interface descriptors via `WinUsb_QueryPipe` identifies two Bulk 
 * **Bulk IN Endpoint (0x81 or 0x82):** Transmits streaming CAN broadcast frames from the vehicle bus to the PC.
 * **Bulk OUT Endpoint (0x01 or 0x02):** Used by Holley tuning software for calibration write commands and queries (unused by EFI Copilot to guarantee passive mode).
 
-### 2.3 Bitrate Handshake
-The cable microcontroller requires a vendor control transfer to set the CAN bus baud rate before streaming frames:
+### 2.3 Bitrate Handshake & Error 121 Characterization
+The cable microcontroller supports a vendor control transfer to configure the CAN bus baud rate before streaming frames:
 * **Setup Packet:**
   * `RequestType = 0x40` (Host-to-Device | Vendor | Device)
   * `Request     = 0x00`
   * `Value       = 0x0222` (Baud rate command identifier)
   * `Index       = 0x0000`
   * `Length      = 4`
-* **Data Buffer:** `uint32` little-endian (e.g. `1,000,000` for 1 Mbps).
+* **Data Buffer:** `uint32` little-endian (`1,000,000` for 1 Mbps).
+* **Win32 Error 121 (`ERROR_SEM_TIMEOUT`):**
+  When issuing synchronous control transfers via WinUSB on an active or default adapter, Windows returns Win32 error 121 (`ERROR_SEM_TIMEOUT`). The Holley hardware dongle's internal firmware default bitrate is hardcoded at **1,000,000 bps** (the required bitrate for all Holley EFI / Terminator X CAN networks). The timeout does not indicate failure—the adapter is already operating at 1,000,000 bps. Our driver uses an `OVERLAPPED` event struct with non-blocking timeout handling so the driver continues safely at factory 1 Mbps without hanging or failing.
 
-### 2.4 CAN Frame Packet Framing
+### 2.4 CAN Frame Packet Framing & Bitwise ID Layout
 CAN frames stream over the Bulk IN pipe in fixed **20-byte records**:
 
 ```
@@ -73,7 +75,7 @@ CAN frames stream over the Bulk IN pipe in fixed **20-byte records**:
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |   'U' (0x55)  |   'S' (0x53)  |   'B' (0x42)  |   'C' (0x43)  |  (Magic Sync: 4 bytes)
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                 CAN Arbitration ID (uint32 LE)                |  (4 bytes: 29-bit extended ID)
+|        Microcontroller CAN Register Word (uint32 LE)          |  (4 bytes: CAN ID << 3 + flags)
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |   DLC (uint8) |              Reserved / Padding               |  (1 byte DLC, 3 bytes padding)
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -84,9 +86,26 @@ CAN frames stream over the Bulk IN pipe in fixed **20-byte records**:
 ```
 
 * **Magic Header:** Fixed ASCII `USBC` (`0x55, 0x53, 0x42, 0x43`).
-* **CAN ID:** 32-bit unsigned integer in little-endian format (e.g. `0x1E010000` for Holley HEFI broadcasts).
-* **DLC:** Number of payload bytes (normally 8 for broadcast telemetry).
-* **Payload:** Raw CAN frame data bytes (up to 8 bytes).
+* **CAN ID Word (Bytes 4..7):**
+  Disassembly of `Terminator X.exe` (call sites at `0x7C2836-0x7C2871`) and `USBCAN-Driver.dll` (`0x10002930`) reveals this field is a direct image of the microcontroller's internal CAN identifier register:
+  * **Bit 2 (IDE Flag):** `1` = 29-bit Extended Frame; `0` = 11-bit Standard Frame.
+  * **Bits 3..31 (Arbitration ID):** The CAN identifier is shifted left by 3 bits.
+  * **Extended Extraction Formula:**
+    $$\text{CAN\_ID} = (\text{raw\_id\_word} \gg 3) \ \& \ \text{0x1FFFFFFF}$$
+  * **Standard Extraction Formula:**
+    $$\text{CAN\_ID} = (\text{raw\_id\_word} \gg 21) \ \& \ \text{0x7FF} \quad (\text{fallback: } (\text{raw\_id\_word} \gg 3) \ \& \ \text{0x7FF})$$
+* **Captured Vehicle Packet Proof:**
+  * Raw captured word `0x7000AAB4`:
+    - Bit 2 (`IDE`) = `1` (Extended frame)
+    - CAN ID = `(0x7000AAB4 >> 3) & 0x1FFFFFFF` = `0x0E001556` (Target 7, Cmd 0 System Announcement, Source ECU, Serial `0x556`)
+    - Inverse check: `(0x0E001556 << 3) | 0x04 = 0x7000AAB4` (exact 100% bitwise reconstruction).
+  * Raw captured word `0x70018124`:
+    - Bit 2 (`IDE`) = `1` (Extended frame)
+    - CAN ID = `(0x70018124 >> 3) & 0x1FFFFFFF` = `0x0E003024` (Target 7, Cmd 0 Module Announcement, Serial `0x024`)
+    - Inverse check: `(0x0E003024 << 3) | 0x04 = 0x70018124` (exact 100% bitwise reconstruction).
+* **DLC (Byte 8):** Number of payload data bytes (`0` to `8`).
+* **Reserved/Padding (Bytes 9..11):** 3 zero bytes (`0x00, 0x00, 0x00`).
+* **Payload (Bytes 12..19):** Raw CAN frame payload bytes (up to 8 bytes).
 
 ---
 
