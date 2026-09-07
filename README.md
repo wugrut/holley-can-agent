@@ -29,7 +29,7 @@ EFI Intelligence Copilot is **NOT** a replacement for Holley EFI software. It is
 ## ⚡ Key Features
 
 - 🏎️ **Standalone Portable Tuning Laptop App**: Single ZIP distribution with zero dependencies; extract and run via 1-click batch files.
-- 🔌 **Hardware Preflight Bus Sniffer**: Tests cable continuity, bus termination ($60\,\Omega$), baud rate (1 Mbps), and decodes live Holley frames before making a run.
+- 🔌 **Hardware Preflight Bus Sniffer**: Tests cable connectivity, baud rate (1 Mbps), and decodes live Holley frames before making a run.
 - 💡 **Interactive On-Hover HUD Tooltips**: Glowing cyberpunk popup cards on every button, status indicator, and drag handle explaining exact function and state.
 - 🎛️ **Touchscreen Visual Cluster Designer**: Drag-and-drop tiles to rearrange, customize channels, and switch between Arc, Radial, Bar, Ring, and Track display styles.
 - 💾 **50Hz CAN Telemetry Logger & CSV Exporter**: Record high-precision time-series runs to SQLite and export CSV logs for MegaLogViewer and Excel.
@@ -87,7 +87,7 @@ For tuning laptops running Windows 10/11 without Python installed:
 | `2_RUN_LIVE_HOLLEY_CABLE.bat` | Convenience alias for official Holley USB-CAN cable. |
 | `2_RUN_LIVE_PCAN.bat` | (Optional Dev/Bench) Connects to PEAK PCAN-USB (`PCAN_USBBUS1`) in listen-only mode. |
 | `3_RUN_LIVE_CANABLE_SLCAN.bat` | Prompts for Windows COM port and connects to CANable in SLCAN mode. |
-| `4_PREFLIGHT_HARDWARE_CHECK.bat` | Sniffs the bus for 15s to verify $60\,\Omega$ termination and decode live Holley packets. |
+| `4_PREFLIGHT_HARDWARE_CHECK.bat` | Sniffs the bus for 15s to verify adapter connectivity and decode live Holley broadcast frames (no external resistors needed). |
 | `5_RUN_WEB_DASHBOARD.bat` | Starts the local web server and opens the browser gauge cluster (`http://localhost:8420`). |
 | `FIELD_GUIDE.md` | Complete printable offline field wiring and troubleshooting manual. |
 
