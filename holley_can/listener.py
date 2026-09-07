@@ -54,8 +54,8 @@ class CANListener:
 
     def __init__(
         self,
-        interface: str = "socketcan",
-        channel: str = "can0",
+        interface: str = "holley" if sys.platform == "win32" else "socketcan",
+        channel: str = "HOLLEY_USBCAN_0" if sys.platform == "win32" else "can0",
         bitrate: int = 1_000_000,
         history_depth: int = 600,  # ~10 minutes at 1 Hz
         receive_own_messages: bool = False,
@@ -230,6 +230,17 @@ class CANListener:
             self._bus.shutdown()
             self._bus = None
         logger.info("CAN listener stopped")
+
+    async def switch_interface(
+        self, interface: str, channel: str, bitrate: int = 1_000_000
+    ) -> None:
+        """Dynamically stop the current listener and switch to a new adapter."""
+        logger.info("Switching CAN interface to %s (%s) at %d bps", interface, channel, bitrate)
+        await self.stop()
+        self.interface = interface
+        self.channel = channel
+        self.bitrate = bitrate
+        await self.start()
 
     # ── Main loop ───────────────────────────────────────────────────────
 

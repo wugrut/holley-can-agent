@@ -3,8 +3,8 @@
 # =============================================================================
 
 can:
-  interface: socketcan       # SocketCAN interface type
-  channel: can0              # Network interface name
+  interface: holley          # Official Holley USB-to-CAN Cable (558-443 via WinUSB)
+  channel: HOLLEY_USBCAN_0   # WinUSB device channel
   bitrate: 1000000           # 1 Mbit/s per HEFI spec
   id_mask: 0xFFFFF800        # Mask to strip ECU serial from CAN IDs
   receive_own_messages: false

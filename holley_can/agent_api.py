@@ -293,18 +293,47 @@ def create_app(
         }
 
     @app.post("/api/hardware/reconnect")
-    async def reconnect_hardware():
-        """Probes or restarts the CAN hardware listener to clear error states."""
+    async def reconnect_hardware(payload: Optional[dict] = None):
+        """Probes, restarts, or dynamically switches the CAN hardware listener."""
         try:
-            if not getattr(listener, "_running", False):
+            target_iface = None
+            target_chan = None
+            if payload and isinstance(payload, dict):
+                target_iface = payload.get("adapter_type") or payload.get("interface")
+                target_chan = payload.get("channel")
+
+            # Fallback auto-selection: on Windows, if interface is socketcan or empty, switch to holley
+            if not target_iface:
+                current_iface = getattr(listener, "interface", "")
+                if sys.platform == "win32" and current_iface in ("socketcan", "unknown", ""):
+                    target_iface = "holley"
+                    target_chan = "HOLLEY_USBCAN_0"
+                else:
+                    target_iface = current_iface or ("holley" if sys.platform == "win32" else "socketcan")
+                    target_chan = getattr(listener, "channel", "HOLLEY_USBCAN_0" if sys.platform == "win32" else "can0")
+
+            if not target_chan:
+                target_chan = "HOLLEY_USBCAN_0" if target_iface in ("holley", "holley_usbcan") else "can0"
+
+            if hasattr(listener, "switch_interface"):
+                await listener.switch_interface(target_iface, target_chan, getattr(listener, "bitrate", 1_000_000))
+            else:
+                await listener.stop()
+                listener.interface = target_iface
+                listener.channel = target_chan
                 await listener.start()
+
             return {
                 "status": "success",
-                "message": "Hardware bus transceiver probed and active.",
+                "message": f"Hardware transceiver active on {listener.interface} ({listener.channel}).",
+                "interface": listener.interface,
+                "channel": listener.channel,
                 "stats": listener.stats,
             }
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            err_msg = str(e)
+            logger.error("Hardware reconnect error: %s", err_msg)
+            return {"status": "error", "message": err_msg}
 
     # ── Run Logger API ──────────────────────────────────────────────────
 

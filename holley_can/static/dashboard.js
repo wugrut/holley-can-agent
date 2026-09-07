@@ -1186,26 +1186,54 @@ async function refreshHardwareDiagnostics() {
                 } else {
                     let html = '';
                     for (const ad of data.adapters) {
-                        const isCurrent = (ad.channel === data.current_channel || ad.name === data.current_interface);
+                        const isCurrent = (ad.channel === data.current_channel || ad.adapter_type === data.current_interface || ad.name === data.current_interface);
                         const badgeClass = isCurrent ? 'hw-badge-active' : (ad.available ? 'hw-badge-avail' : 'hw-badge-unavail');
                         const badgeText = isCurrent ? 'ACTIVE BUS' : (ad.available ? 'AVAILABLE' : 'OFFLINE');
-                        const icon = (ad.adapter_type === 'pcan' || String(ad.name).includes('PCAN')) ? '🔌' : 
+                        const icon = (ad.adapter_type === 'holley' || String(ad.name).includes('Holley')) ? '🏎️' :
+                                     (ad.adapter_type === 'pcan' || String(ad.name).includes('PCAN')) ? '🔌' : 
                                      (ad.adapter_type === 'slcan' || String(ad.name).includes('COM')) ? '📟' : 
                                      (ad.adapter_type === 'socketcan') ? '🐧' : '💻';
+
+                        let actionHtml = `<span class="hw-adapter-badge ${badgeClass}">${badgeText}</span>`;
+                        if (!isCurrent && ad.available) {
+                            actionHtml += `
+                                <button type="button" class="action-btn primary-btn btn-connect-adapter" 
+                                    data-adapter-type="${escapeHtml(ad.adapter_type || '')}" 
+                                    data-channel="${escapeHtml(ad.channel || '')}"
+                                    style="padding: 4px 10px; font-size: 11px; margin-left: 8px; cursor: pointer;">
+                                    ⚡ CONNECT
+                                </button>
+                            `;
+                        }
+
                         html += `
-                            <div class="hw-adapter-item">
-                                <div class="hw-adapter-left">
-                                    <span style="font-size: 16px;">${icon}</span>
+                            <div class="hw-adapter-item" style="display: flex; justify-content: space-between; align-items: center;">
+                                <div class="hw-adapter-left" style="display: flex; gap: 10px; align-items: center;">
+                                    <span style="font-size: 20px;">${icon}</span>
                                     <div>
                                         <strong>${escapeHtml(ad.name || ad.channel || 'CAN Interface')}</strong>
                                         <div style="font-size: 10px; color: var(--text-dim);">${escapeHtml(ad.adapter_type ? ad.adapter_type.toUpperCase() : 'DRIVER')} &bull; ${escapeHtml(ad.description || ad.channel || 'Host Interface')}</div>
                                     </div>
                                 </div>
-                                <span class="hw-adapter-badge ${badgeClass}">${badgeText}</span>
+                                <div style="display: flex; align-items: center;">
+                                    ${actionHtml}
+                                </div>
                             </div>
                         `;
                     }
                     adaptersContainer.innerHTML = html;
+
+                    // Wire up connect buttons
+                    adaptersContainer.querySelectorAll('.btn-connect-adapter').forEach(btn => {
+                        btn.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            const adapterType = btn.getAttribute('data-adapter-type');
+                            const channel = btn.getAttribute('data-channel');
+                            btn.disabled = true;
+                            btn.textContent = 'Connecting...';
+                            await reconnectHardware(btn, { adapter_type: adapterType, channel: channel });
+                        });
+                    });
                 }
             }
         }
@@ -1217,14 +1245,14 @@ async function refreshHardwareDiagnostics() {
     }
 }
 
-async function reconnectHardware(btnEl) {
+async function reconnectHardware(btnEl, targetAdapter = null) {
     const statusEl = document.getElementById('hw-probe-status');
     const reconnectLabel = document.getElementById('hw-reconnect-label');
-    if (statusEl) statusEl.textContent = 'Probing CAN hardware adapters...';
-    if (reconnectLabel) reconnectLabel.textContent = 'Probing...';
+    if (statusEl) statusEl.textContent = 'Connecting to CAN hardware adapter...';
+    if (reconnectLabel) reconnectLabel.textContent = 'Connecting...';
     if (btnEl) btnEl.disabled = true;
 
-    showToast('⚡ Probing CAN hardware transceivers...', 'info');
+    showToast('⚡ Connecting CAN hardware transceiver...', 'info');
 
     // Reset WebSocket reconnect state and retry immediate connection
     state.reconnectAttempts = 0;
@@ -1233,14 +1261,25 @@ async function reconnectHardware(btnEl) {
     }
 
     try {
-        const res = await fetch('/api/hardware/reconnect', { method: 'POST' });
+        const body = targetAdapter ? JSON.stringify(targetAdapter) : JSON.stringify({});
+        const res = await fetch('/api/hardware/reconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body,
+        });
         const data = await res.json();
         if (data.status === 'success') {
-            showToast('✅ Hardware transceiver active', 'success');
-            if (statusEl) statusEl.textContent = 'Transceiver probed and active';
+            showToast(`✅ Connected: ${data.interface || 'Hardware'} (${data.channel || 'active'})`, 'success');
+            if (statusEl) statusEl.textContent = `Active on ${data.interface} (${data.channel})`;
+            setTimeout(() => {
+                const modal = document.getElementById('hardware-modal');
+                if (modal && !modal.classList.contains('hidden')) {
+                    modal.classList.add('hidden');
+                }
+            }, 1200);
         } else {
-            showToast(`Hardware probe: ${data.message || 'Check adapters'}`, 'error');
-            if (statusEl) statusEl.textContent = `Probe: ${data.message || 'Error'}`;
+            showToast(`Connection failed: ${data.message || 'Check adapter'}`, 'error');
+            if (statusEl) statusEl.textContent = `Error: ${data.message || 'Failed'}`;
         }
     } catch (e) {
         console.warn('Hardware reconnect request failed:', e);

@@ -354,36 +354,38 @@
                     <div class="hw-loading">Scanning host CAN hardware interfaces...</div>
                 </div>
 
-                <!-- 4-Step Field Troubleshooting Guide -->
-                <div class="hw-section-title">PLUGGED IN BUT NOT CONNECTING? FIELD CHECKLIST</div>
+                <!-- Holley Hardware & Connection Guide -->
+                <div class="hw-section-title">HOLLEY USB-CAN CABLE & FIELD CHECKLIST</div>
+                <div class="hw-banner-note" style="margin-bottom: 12px; padding: 10px 14px; background: rgba(0, 240, 255, 0.08); border-left: 3px solid var(--accent-cyan); border-radius: 4px; font-size: 11px; line-height: 1.5; color: var(--text-main);">
+                    💡 <strong style="color: var(--accent-cyan);">NO RESISTORS NEEDED:</strong> If your Holley software already communicates with the Terminator X using this cable, your wiring, termination, and baud rate are <strong>already 100% correct</strong>. You do NOT need to install or measure any resistors.
+                </div>
                 <div class="hw-checklist">
                     <div class="hw-checklist-item">
                         <div class="hw-check-step">1</div>
+                        <div class="hw-check-content">
+                            <strong>Close Holley Terminator X Tuning Software:</strong>
+                            <p>Microsoft WinUSB allows exclusive hardware access by only one program at a time. If the official Holley software is open or online, close it before connecting Copilot.</p>
+                        </div>
+                    </div>
+                    <div class="hw-checklist-item">
+                        <div class="hw-check-step">2</div>
                         <div class="hw-check-content">
                             <strong>Ignition Switch in RUN Position:</strong>
                             <p>The Holley Terminator X ECU CAN transceiver only powers up when switched +12V is present in the "RUN" position. Accessory (ACC) is insufficient.</p>
                         </div>
                     </div>
                     <div class="hw-checklist-item">
-                        <div class="hw-check-step">2</div>
-                        <div class="hw-check-content">
-                            <strong>Enable CAN Broadcast in Holley EFI:</strong>
-                            <p>In Holley EFI software, navigate to <em>System Setup → CAN Devices / Broadcast</em> and confirm CAN Broadcast is checked and active.</p>
-                        </div>
-                    </div>
-                    <div class="hw-checklist-item">
                         <div class="hw-check-step">3</div>
                         <div class="hw-check-content">
-                            <strong>Verify 4-Pin Metri-Pack Harness Pinout:</strong>
-                            <p><strong>Pin A (White):</strong> CAN-High &nbsp;|&nbsp; <strong>Pin B (Blue):</strong> CAN-Low &nbsp;|&nbsp; <strong>Pin D (Black):</strong> Ground/Shield.<br>
-                            ⚠️ <strong>Pin C (Red/Orange):</strong> Switched +12V. <em>Leave Pin C disconnected</em> from standard USB-CAN adapters to prevent 12V damage!</p>
+                            <strong>Enable CAN Broadcast in Holley EFI Calibration:</strong>
+                            <p>In Holley Terminator X Software, navigate to <em>System Setup → CAN Devices</em> and verify <strong>Enable CAN Broadcast</strong> (Racepak broadcast at 1 Mbps) is turned ON, then send tune to ECU.</p>
                         </div>
                     </div>
                     <div class="hw-checklist-item">
                         <div class="hw-check-step">4</div>
                         <div class="hw-check-content">
-                            <strong>Verify 60Ω Bus Termination:</strong>
-                            <p>With vehicle key OFF, measure resistance across Pin A (CAN H) and Pin B (CAN L) with an ohmmeter. It must read <strong>~60 Ω</strong> (two 120 Ω resistors in parallel: one internal to Terminator X, one at bus end). If it reads 120 Ω, a terminating resistor is missing.</p>
+                            <strong>Click [⚡ CONNECT] on Holley USB-CAN Cable:</strong>
+                            <p>In the detected adapters list above, locate <strong>Holley USB-CAN Cable (Part 558-443)</strong> and click the <strong>⚡ Connect</strong> button to immediately bind and stream live telemetry.</p>
                         </div>
                     </div>
                 </div>

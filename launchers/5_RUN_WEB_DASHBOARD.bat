@@ -9,8 +9,8 @@ echo Your default web browser will open automatically.
 echo Press Ctrl+C in this window to stop the server.
 echo.
 if exist "%~dp0efi_copilot.exe" (
-    "%~dp0efi_copilot.exe" dashboard --port 8420
+    "%~dp0efi_copilot.exe" dashboard --interface holley --channel HOLLEY_USBCAN_0 --port 8420
 ) else (
-    python "%~dp0portable_entry.py" dashboard --port 8420
+    python "%~dp0portable_entry.py" dashboard --interface holley --channel HOLLEY_USBCAN_0 --port 8420
 )
 pause
