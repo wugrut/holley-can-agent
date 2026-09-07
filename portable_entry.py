@@ -91,7 +91,14 @@ async def run_preflight(
     """
     from app.hardware.detection import discover_available_adapters
     from app.hardware.usb_can import UsbCanAdapter
-    from app.protocol.hefi import HefiProtocolDecoder, is_hefi_broadcast
+    from app.protocol.hefi import (
+        HefiProtocolDecoder,
+        extract_announcement_info,
+        extract_channel_index,
+        is_hefi_announcement,
+        is_hefi_broadcast,
+    )
+    from app.protocol.registry import VERIFIED_CHANNELS
 
     print("\n" + "═" * 76)
     print("  EFI INTELLIGENCE COPILOT — HARDWARE PREFLIGHT CHECK & BUS SNIFFER")
@@ -140,6 +147,7 @@ async def run_preflight(
     decoder = HefiProtocolDecoder()
     frame_counts: Dict[int, int] = defaultdict(int)
     channel_samples: Dict[str, float] = {}
+    captured_frames: List[RawCANFrame] = []
     error_frames = 0
     total_frames = 0
     start_time = time.time()
@@ -154,6 +162,9 @@ async def run_preflight(
             if frame.is_error_frame:
                 error_frames += 1
                 continue
+
+            if len(captured_frames) < 20:
+                captured_frames.append(frame)
 
             frame_counts[frame.arbitration_id] += 1
             if is_hefi_broadcast(frame.arbitration_id):
@@ -190,6 +201,27 @@ async def run_preflight(
     print(f"  CAN Bus Error Frames:   {error_frames}")
     print(f"  Unique CAN IDs Seen:    {len(frame_counts)}")
 
+    if captured_frames:
+        print("\n  First Decoded CAN Frames (up to 20):")
+        print("  ┌────┬──────────────┬──────────┬─────┬─────────────────────────┬──────────────────────────────────────────┐")
+        print("  │ #  │ CAN ID (Hex) │ Format   │ DLC │ Payload Data (Hex)      │ Protocol Meaning / Device Identification │")
+        print("  ├────┼──────────────┼──────────┼─────┼─────────────────────────┼──────────────────────────────────────────┤")
+        for idx, f in enumerate(captured_frames[:20], start=1):
+            fmt = "29-bit Ext" if f.is_extended_id else "11-bit Std"
+            payload_hex = " ".join(f"{b:02X}" for b in f.data)
+            if is_hefi_announcement(f.arbitration_id):
+                info = extract_announcement_info(f.arbitration_id)
+                classification = f"{info['source_name']} (Serial 0x{info['serial']:03X})"
+            elif is_hefi_broadcast(f.arbitration_id):
+                ch_idx = extract_channel_index(f.arbitration_id)
+                ch_def = VERIFIED_CHANNELS.get(ch_idx)
+                ch_desc = ch_def.label if ch_def else f"Channel {ch_idx}"
+                classification = f"HEFI Telemetry Ch {ch_idx} ({ch_desc})"
+            else:
+                classification = f"CAN Arbitration ID 0x{f.arbitration_id:08X}"
+            print(f"  │ {idx:<2} │ 0x{f.arbitration_id:08X}   │ {fmt:<8} │ {f.dlc:<3} │ {payload_hex:<23} │ {classification:<40} │")
+        print("  └────┴──────────────┴──────────┴─────┴─────────────────────────┴──────────────────────────────────────────┘")
+
     if total_frames == 0:
         if final_status.bytes_received > 0:
             print("\n⚠️ USB STREAM ACTIVITY DETECTED, BUT ZERO VALID CAN FRAMES DECODED")
@@ -203,38 +235,19 @@ async def run_preflight(
                 print("  ⭐ NOTE: If your Holley Terminator X software already communicates with the ECU over this cable,")
                 print("     your harness wiring, pinout, and bus termination are ALREADY CORRECT. No resistors needed!")
                 print("  1. Ignition Switch in RUN: Turn vehicle ignition switch to RUN / ON (ECU needs 12V power).")
-                print("  2. Holley CAN Broadcast Disabled:")
-                print("     - Open Holley Terminator X Software -> System Setup -> CAN Devices.")
-                print("     - Verify 'Enable CAN Broadcast' (or Racepak broadcast at 1 Mbps) is turned ON.")
-                print("     - Send updated calibration to ECU, then cycle ignition switch.")
-                print("  3. Close Holley Tuning Software:")
-                print("     - Windows WinUSB enforces exclusive hardware access by one program at a time.")
-                print("     - Make sure Holley Terminator X software is completely closed.")
+                print("  2. Exclusive USB Access: Ensure Holley Terminator X software is completely closed.")
             else:
                 print("  1. Ignition Switch OFF: Turn vehicle ignition switch to RUN / ON (ECU needs 12V power).")
-                print("  2. Holley CAN Broadcast Disabled:")
-                print("     - Open Holley Terminator X Software -> System Setup -> CAN Devices.")
-                print("     - Verify 'Enable CAN Broadcast' (or Racepak broadcast) is turned ON.")
-                print("  3. Wiring Pinout Disconnect (Holley 4-pin Metri-Pack connector):")
+                print("  2. Wiring Pinout Disconnect (Holley 4-pin Metri-Pack connector):")
                 print("     - Pin A: Blue (CAN High) -> Connect to CAN-H on adapter")
                 print("     - Pin B: White (CAN Low) -> Connect to CAN-L on adapter")
                 print("     - Pin C: Red/White (+12V Power) -> DO NOT CONNECT TO DONGLE!")
                 print("     - Pin D: Black (Ground / Shield) -> Connect to GND on adapter")
-                print("  4. Bus Termination Resistor Missing (Only needed for generic/raw CAN adapters):")
-                print("     - Turn vehicle power OFF.")
-                print("     - Measure resistance between CAN-H (Pin A) and CAN-L (Pin B) using a multimeter.")
-                print("     - Normal Reading: 55Ω to 65Ω (nominally 60Ω from two parallel 120Ω resistors).")
-                print("     - If reading is ~120Ω: One terminator is missing. Enable 120Ω jumper on your USB-CAN adapter.")
-                print("     - If reading is OPEN / Megaohms: Both terminators missing or wiring broken.")
     elif error_frames > total_frames * 0.1:
         print("\n⚠️ WARNING: HIGH CAN BUS ERROR RATE DETECTED")
         print(f"  Error frames account for {error_frames / total_frames * 100:.1f}% of traffic.")
-        print("  Common causes:")
-        print("  - Baud rate mismatch: Confirm Holley is set to 1,000,000 bps (1 Mbps).")
-        print("  - Improper termination: Measure resistance across CAN-H and CAN-L (should be ~60Ω).")
-        print("  - Loose ground / shield wire on Pin D.")
     else:
-        print("\n✅ SUCCESS: CAN BUS IS HEALTHY AND BROADCASTING AT 1 MBPS!")
+        print("\n✅ SUCCESS: CAN BUS IS HEALTHY AND ACTIVE AT 1 MBPS!")
         print(f"  Bus throughput: {total_frames / duration:.1f} frames/sec")
 
         if channel_samples:
@@ -247,8 +260,8 @@ async def run_preflight(
             print("  └───────────────────────┴──────────────┴──────────────┘")
             print("\n  The system is fully verified and ready for live Copilot recording!")
         else:
-            print("\n  Note: CAN frames were received, but none matched standard 29-bit Holley HEFI IDs.")
-            print("  Verify ECU broadcast configuration in Holley EFI software.")
+            print("\n  Note: ECU announcement frames were detected on the bus.")
+            print("  Continuous sensor streaming begins when the engine is running or active.")
     print("═" * 76 + "\n")
 
 

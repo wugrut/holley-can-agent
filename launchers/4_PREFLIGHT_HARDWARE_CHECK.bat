@@ -55,7 +55,7 @@ if "%CHOICE%"=="3" (
 ) else if "%CHOICE%"=="2" (
     %RUNNER% preflight --interface pcan --channel PCAN_USBBUS1 --seconds 15
 ) else (
-    %RUNNER% preflight --interface holley --channel HOLLEY_USBCAN_0 --seconds 15
+    %RUNNER% preflight --interface holley --channel HOLLEY_USBCAN_0 --seconds 30
 )
 echo.
 pause

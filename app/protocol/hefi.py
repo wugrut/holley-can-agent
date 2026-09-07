@@ -50,6 +50,35 @@ def is_hefi_broadcast(can_id: int) -> bool:
     return target in (0b000, 0b111)
 
 
+def is_hefi_announcement(can_id: int) -> bool:
+    """
+    Checks if a CAN ID is a Holley system/device announcement or heartbeat beacon.
+    In Holley 29-bit protocol, cmd_bit == 0 and target == 7 represents presence beacons
+    emitted by ECUs, wideband controllers, and other CAN modules.
+    """
+    clean_id = can_id & 0x1FFFFFFF
+    cmd_bit = (clean_id >> 28) & 1
+    target = (clean_id >> 25) & 7
+    return cmd_bit == 0 and target == 7
+
+
+def extract_announcement_info(can_id: int) -> dict:
+    """Decodes device metadata from a Holley announcement beacon (cmd_bit=0, target=7)."""
+    clean_id = can_id & 0x1FFFFFFF
+    src = (clean_id >> 11) & 7
+    serial = clean_id & 0x7FF
+    src_map = {
+        2: "Holley Terminator X ECU",
+        5: "PC Software / Dongle",
+        6: "CAN Wideband Controller",
+    }
+    return {
+        "source_type": src,
+        "source_name": src_map.get(src, f"Unknown Device (Type {src})"),
+        "serial": serial,
+    }
+
+
 
 
 class HefiProtocolDecoder(ProtocolDecoder):

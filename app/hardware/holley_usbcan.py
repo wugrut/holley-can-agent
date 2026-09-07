@@ -110,8 +110,8 @@ if sys.platform == "win32":
 
     class OVERLAPPED(ctypes.Structure):
         _fields_ = [
-            ("Internal", ctypes.c_ulong),
-            ("InternalHigh", ctypes.c_ulong),
+            ("Internal", ctypes.c_size_t),
+            ("InternalHigh", ctypes.c_size_t),
             ("Offset", wintypes.DWORD),
             ("OffsetHigh", wintypes.DWORD),
             ("hEvent", wintypes.HANDLE),
@@ -549,11 +549,12 @@ class HolleyUsbCanAdapter(HardwareInterface):
         winusb.WinUsb_SetPipePolicy(h_winusb, self._in_pipe_id, RAW_IO, 1, ctypes.byref(true_val))
         winusb.WinUsb_SetPipePolicy(h_winusb, self._in_pipe_id, PIPE_TRANSFER_TIMEOUT, 4, ctypes.byref(timeout_ms))
 
-        # 6. Configure CAN Bitrate via Vendor Control Transfer (0x0222 command)
+        # 6. Configure CAN Bitrate via Control Transfer (matching CUsbCanDriver::SetSpeed at RVA 0x3350)
+        # Setup Packet: RequestType=0x22 (Class/Endpoint), Request=0x02 (SetSpeed), Value=0x0000, Length=4
         setup = WINUSB_SETUP_PACKET(
-            RequestType=0x40,  # Host-to-Device | Vendor | Device
-            Request=0x00,
-            Value=0x0222,      # Baud rate selection command (0x0222 in USBCAN-Driver.dll)
+            RequestType=0x22,
+            Request=0x02,
+            Value=0x0000,
             Index=0x0000,
             Length=4,
         )
