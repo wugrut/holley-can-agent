@@ -279,11 +279,23 @@ def decode_frame(can_id: int, data: bytes, timestamp: float) -> DecodedFrame:
 
 
 def is_hefi_broadcast(can_id: int) -> bool:
-    """Check if a CAN ID looks like a valid HEFI broadcast frame."""
-    # Bit 28 should be set (command/broadcast flag)
-    cmd_bit = (can_id >> 28) & 1
-    # Bits 27:25 should be 0b111 (broadcast target)
-    target = (can_id >> 25) & 0b111
-    # Bits 13:11 should be 0b010 (ECU source)
-    source = (can_id >> 11) & 0b111
-    return cmd_bit == 1 and target == 0b111 and source == SOURCE_ECU
+    """
+    Check if a 29-bit CAN ID looks like a valid HEFI broadcast frame.
+
+    Supports both:
+      - Historical Racepak / 3rd-party broadcast format (target=0b111 -> 0x1E...)
+      - Terminator X / X MAX native broadcast stream (target=0b000 -> 0x10...)
+    """
+    clean_id = can_id & 0x1FFFFFFF
+    cmd_bit = (clean_id >> 28) & 1
+    if cmd_bit != 1:
+        return False
+
+    channel_index = (clean_id >> 14) & 0x7FF
+    if channel_index == 0:
+        return False
+
+    target = (clean_id >> 25) & 0b111
+    return target in (0b000, 0b111)
+
+

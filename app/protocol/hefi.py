@@ -32,11 +32,24 @@ def extract_ecu_serial(can_id: int) -> int:
 
 
 def is_hefi_broadcast(can_id: int) -> bool:
-    """Validates command, target, and source bitfields."""
-    cmd_bit = (can_id >> 28) & 1
-    target = (can_id >> 25) & 0b111
-    source = (can_id >> 11) & 0b111
-    return cmd_bit == 1 and target == 0b111 and source == SOURCE_ECU
+    """
+    Validates whether a CAN ID is a Holley HEFI broadcast frame.
+    Supports both Terminator X native broadcasts (0x10...) and
+    historical Racepak/3rd-party broadcast streams (0x1E...).
+    """
+    clean_id = can_id & 0x1FFFFFFF
+    cmd_bit = (clean_id >> 28) & 1
+    if cmd_bit != 1:
+        return False
+
+    channel_index = (clean_id >> 14) & 0x7FF
+    if channel_index == 0:
+        return False
+
+    target = (clean_id >> 25) & 0b111
+    return target in (0b000, 0b111)
+
+
 
 
 class HefiProtocolDecoder(ProtocolDecoder):

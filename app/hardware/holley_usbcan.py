@@ -292,12 +292,15 @@ def parse_holley_can_packet(packet: bytes) -> Optional[tuple[int, int, bytes]]:
     # 9..11: padding / flags (3 bytes)
     # 12..19: payload data (8 bytes)
     try:
-        header, can_id, dlc, pad, payload = struct.unpack("<4sIB3s8s", packet)
+        header, raw_can_id, dlc, pad, payload = struct.unpack("<4sIB3s8s", packet)
         if dlc > 8:
             dlc = 8
+        # Mask out dongle firmware flags (bits 29..31) to isolate 29-bit CAN arbitration ID
+        can_id = raw_can_id & 0x1FFFFFFF
         return can_id, dlc, payload[:dlc]
     except Exception:
         return None
+
 
 
 class HolleyUsbCanAdapter(HardwareInterface):
@@ -527,7 +530,10 @@ class HolleyUsbCanAdapter(HardwareInterface):
             if success and bytes_transferred.value > 0:
                 chunk = read_buf.raw[: bytes_transferred.value]
                 self._status.bytes_received += len(chunk)
-                self._process_stream_chunk(chunk)
+                try:
+                    self._process_stream_chunk(chunk)
+                except Exception as chunk_err:
+                    logger.warning("Error processing stream chunk: %s", chunk_err)
             else:
                 err = kernel32.GetLastError()
                 # Error 1167 (ERROR_DEVICE_NOT_CONNECTED) or 121 (ERROR_SEM_TIMEOUT)
@@ -570,23 +576,28 @@ class HolleyUsbCanAdapter(HardwareInterface):
             parsed = parse_holley_can_packet(packet)
             if parsed is not None:
                 can_id, dlc, payload = parsed
-                frame = RawCANFrame(
-                    timestamp=time.time(),
-                    arbitration_id=can_id,
-                    data=payload,
-                    dlc=dlc,
-                    channel=self.channel,
-                    is_extended_id=True,
-                    is_error_frame=False,
-                )
-                self._status.frames_received += 1
-                self._status.last_frame_time = frame.timestamp
+                can_id = can_id & 0x1FFFFFFF
+                try:
+                    frame = RawCANFrame(
+                        timestamp=time.time(),
+                        arbitration_id=can_id,
+                        data=payload,
+                        dlc=dlc,
+                        channel=self.channel,
+                        is_extended_id=True,
+                        is_error_frame=False,
+                    )
+                    self._status.frames_received += 1
+                    self._status.last_frame_time = frame.timestamp
 
-                if self._queue is not None and self._loop is not None:
-                    try:
-                        self._loop.call_soon_threadsafe(self._enqueue_frame, frame)
-                    except RuntimeError:
-                        pass
+                    if self._queue is not None and self._loop is not None:
+                        try:
+                            self._loop.call_soon_threadsafe(self._enqueue_frame, frame)
+                        except RuntimeError:
+                            pass
+                except Exception as frame_err:
+                    logger.warning("Error creating RawCANFrame: %s", frame_err)
+                    self._status.error_frames += 1
             else:
                 self._status.error_frames += 1
 

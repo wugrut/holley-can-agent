@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field

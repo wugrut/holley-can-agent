@@ -89,19 +89,26 @@ class TestHEFIBroadcastValidation:
         can_id = make_hefi_can_id(channel_index=1)
         assert is_hefi_broadcast(can_id) is True
 
+    def test_live_terminator_x_broadcast_frames(self):
+        """Validates real-world Terminator X broadcast frames captured on live vehicle."""
+        # Frame 1: Coolant Enrichment (ch 10)
+        assert is_hefi_broadcast(0x1002AAB4) is True
+        assert extract_channel_index(0x1002AAB4) == 10
+        # Frame 2: AFR Bank 1 (ch 6)
+        assert is_hefi_broadcast(0x10018124) is True
+        assert extract_channel_index(0x10018124) == 6
+
     def test_invalid_cmd_bit(self):
         """If the command bit (28) is 0, it's not a broadcast."""
         can_id = make_hefi_can_id(channel_index=1)
         can_id &= ~(1 << 28)  # Clear cmd bit
         assert is_hefi_broadcast(can_id) is False
 
-    def test_invalid_source(self):
-        """If source bits are not 010 (ECU), it's not valid."""
-        can_id = make_hefi_can_id(channel_index=1)
-        # Set source to 0b101 instead of 0b010
-        can_id &= ~(0b111 << 11)
-        can_id |= (0b101 << 11)
+    def test_invalid_channel_index(self):
+        """Channel index 0 is not a valid broadcast."""
+        can_id = 0x10000000  # channel_index == 0
         assert is_hefi_broadcast(can_id) is False
+
 
 
 # ─── Payload Tests ───────────────────────────────────────────────────────────

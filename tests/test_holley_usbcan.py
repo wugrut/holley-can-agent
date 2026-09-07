@@ -70,6 +70,19 @@ class TestHolleyUsbCanParser:
         packet = b"USBC\x01\x02"
         assert parse_holley_can_packet(packet) is None
 
+    def test_parse_real_hardware_packet_with_firmware_flags(self) -> None:
+        """Physical Holley dongles tag raw frames with upper flags (0x70000000)."""
+        raw_id = 0x7002AAB4  # Real packet captured from vehicle Terminator X
+        payload = bytes([0x41, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        packet = USBC_MAGIC + struct.pack("<IB3s8s", raw_id, 8, b"\x00\x00\x00", payload)
+
+        result = parse_holley_can_packet(packet)
+        assert result is not None
+        parsed_id, parsed_dlc, parsed_data = result
+        assert parsed_id == 0x1002AAB4
+        assert parsed_id <= 0x1FFFFFFF
+
+
 
 class TestHolleyUsbCanStreamProcessing:
     """Tests for streaming chunk fragmentation, jitter, and recovery."""
