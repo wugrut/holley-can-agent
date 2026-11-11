@@ -85,6 +85,53 @@ def _nearest_index(axis: List[int], val: float) -> int:
     return best_i
 
 
+def compute_manifold_referenced_fuel_metrics(
+    fuel_psi_gauge: float,
+    map_kpa: float,
+    baro_kpa: float = 101.325,
+    base_fuel_psi: float = 58.0,
+) -> Dict[str, float | bool]:
+    """
+    Computes 1:1 manifold/boost-referenced fuel pressure metrics for a single sample.
+
+    With a 1:1 vacuum/boost-referenced regulator set to 58.0 PSI base (hose off):
+      - Manifold Gauge Pressure (PSIG) = (MAP_kPa - Baro_kPa) * 0.145038
+        (negative in vacuum, 0 at atmospheric, positive in boost)
+      - Expected Rail Gauge Pressure (PSIG) = 58.0 + Manifold_PSIG
+        (e.g., ~49.8 PSIG at 45 kPa idle vacuum, 58.0 PSIG at 101.3 kPa, 73.0 PSIG at +15 PSI boost)
+      - Injector Differential Pressure (dP_inj) = Rail_PSIG - Manifold_PSIG
+        (should remain constant at ~58.0 PSI across ALL vacuum and boost cells!)
+      - Injector Flow Ratio = sqrt(dP_inj / 58.0)
+    """
+    baro = baro_kpa if baro_kpa > 50.0 else 101.325
+    manifold_psig = (map_kpa - baro) * 0.145038
+    expected_rail_psig = base_fuel_psi + manifold_psig
+
+    # If no fuel pressure sensor is active (< 15 PSI), assume ideal 1:1 tracking (dP = 58.0 PSI)
+    sensor_active = fuel_psi_gauge >= 15.0
+    if sensor_active:
+        diff_psi = fuel_psi_gauge - manifold_psig
+        dp_error_psi = diff_psi - base_fuel_psi  # negative = pressure sag below 58 PSI differential
+        flow_ratio = math.sqrt(max(10.0, diff_psi) / base_fuel_psi)
+        # Flag warning if differential pressure across injector tip drops > 6.0 PSI below 58.0 PSI (< 52.0 PSI dP)
+        fp_drop = dp_error_psi < -6.0
+    else:
+        diff_psi = base_fuel_psi
+        dp_error_psi = 0.0
+        flow_ratio = 1.0
+        fp_drop = False
+
+    return {
+        "manifold_psig": round(manifold_psig, 2),
+        "expected_rail_psig": round(expected_rail_psig, 2),
+        "rail_psig": round(fuel_psi_gauge, 2),
+        "differential_psi": round(diff_psi, 2),
+        "dp_error_psi": round(dp_error_psi, 2),
+        "injector_flow_ratio": round(flow_ratio, 4),
+        "fp_drop": fp_drop,
+    }
+
+
 def estimate_wideband_transport_delay_s(rpm: float, map_kpa: float) -> float:
     """
     Computes wideband O2 sensor exhaust transport delay (100ms to 150ms) as a function
@@ -180,6 +227,7 @@ class _HistoryState:
     tps: float
     base_ve: float
     fuel_psi: float
+    diff_fuel_psi: float
     knock: float
     fp_drop: bool
     is_steady: bool
@@ -195,6 +243,7 @@ class VECellAccumulator:
     sum_learn: float = 0.0
     sum_base_ve: float = 0.0
     sum_fuel_psi: float = 0.0
+    sum_diff_fuel_psi: float = 0.0
     sum_knock: float = 0.0
     fuel_psi_drop_hits: int = 0
 
@@ -206,6 +255,7 @@ class VECellAccumulator:
         learn: float,
         base_ve: float,
         fuel_psi: float,
+        diff_fuel_psi: float,
         knock: float,
         fp_drop: bool,
     ) -> None:
@@ -216,6 +266,7 @@ class VECellAccumulator:
         self.sum_learn += learn
         self.sum_base_ve += base_ve
         self.sum_fuel_psi += fuel_psi
+        self.sum_diff_fuel_psi += diff_fuel_psi
         self.sum_knock += knock
         if fp_drop:
             self.fuel_psi_drop_hits += 1
@@ -391,9 +442,23 @@ class VETableOptimizer:
             or self.default_base_ve[m_idx_now][r_idx_now]
         )
 
-        boost_psi_now = max(0.0, (map_kpa - baro) * 0.145038)
-        expected_fp_now = self.base_fuel_psi + boost_psi_now
-        fp_drop_now = (fuel_psi > 15.0) and (map_kpa >= 95.0) and ((expected_fp_now - fuel_psi) > 6.0)
+        # Evaluate 1:1 manifold/boost-referenced fuel pressure at this instant:
+        # Expected Rail PSIG = 58.0 + Manifold_PSIG (across both vacuum and boost!),
+        # so Differential Injector Pressure (Rail_PSIG - Manifold_PSIG) is always 58.0 PSI.
+        baro = row.get("baro_kpa", 101.325) or 101.325
+        manifold_psig_now = (map_kpa - baro) * 0.145038
+        default_rail_psig = self.base_fuel_psi + manifold_psig_now
+        raw_fp = row.get("fuel_pressure")
+        fuel_psi = float(raw_fp) if (raw_fp is not None and raw_fp > 0.0) else default_rail_psig
+
+        fp_metrics_now = compute_manifold_referenced_fuel_metrics(
+            fuel_psi_gauge=fuel_psi,
+            map_kpa=map_kpa,
+            baro_kpa=baro,
+            base_fuel_psi=self.base_fuel_psi,
+        )
+        diff_fp_now = float(fp_metrics_now["differential_psi"])
+        fp_drop_now = bool(fp_metrics_now["fp_drop"])
 
         current_state = _HistoryState(
             timestamp_s=now_ts,
@@ -402,6 +467,7 @@ class VETableOptimizer:
             tps=tps,
             base_ve=base_ve_now,
             fuel_psi=fuel_psi,
+            diff_fuel_psi=diff_fp_now,
             knock=knock,
             fp_drop=fp_drop_now,
             is_steady=not is_transient,
@@ -446,6 +512,7 @@ class VETableOptimizer:
             learn=learn,
             base_ve=aligned_state.base_ve,
             fuel_psi=aligned_state.fuel_psi,
+            diff_fuel_psi=aligned_state.diff_fuel_psi,
             knock=aligned_state.knock,
             fp_drop=aligned_state.fp_drop,
         )
@@ -525,7 +592,9 @@ class VETableOptimizer:
                 avg_learn = acc.sum_learn / acc.hits
                 avg_base_ve = acc.sum_base_ve / acc.hits
                 avg_fp = acc.sum_fuel_psi / acc.hits
+                avg_diff_fp = acc.sum_diff_fuel_psi / acc.hits
                 avg_knock = acc.sum_knock / acc.hits
+                expected_rail_psi = self.base_fuel_psi + ((map_val - 101.325) * 0.145038)
 
                 if abs(avg_learn) >= 0.5:
                     cells_with_active_learn += 1
@@ -580,6 +649,8 @@ class VETableOptimizer:
                     "afr_avg": round(avg_afr, 2),
                     "target_afr": round(avg_target, 2),
                     "fuel_psi": round(avg_fp, 1),
+                    "expected_rail_psi": round(expected_rail_psi, 1),
+                    "diff_fuel_psi": round(avg_diff_fp, 1),
                     "fp_warning": fp_warn,
                     "knock_deg": round(avg_knock, 1),
                 })
@@ -685,10 +756,33 @@ class PostPullDetector:
 
         avg_cl = sum(s.get("closed_loop_comp", 0.0) for s in samples) / len(samples)
         avg_learn = sum(s.get("current_learn", 0.0) for s in samples) / len(samples)
-        min_fp = min(s.get("fuel_pressure", self.base_fuel_psi) for s in samples)
         max_duty = max(s.get("injector_duty", 0.0) for s in samples)
         max_knock = max(s.get("knock_retard", 0.0) for s in samples)
         ethanol_pct = max((s.get("ethanol_pct", 0.0) for s in samples), default=0.0)
+
+        # Evaluate 1:1 boost-referenced fuel pressure sample-by-sample across the pull:
+        # At every instant t, Expected_Rail_PSIG(t) = 58.0 + Manifold_PSIG(t),
+        # so Differential Injector Pressure dP_inj(t) = Rail_PSIG(t) - Manifold_PSIG(t) = 58.0 PSI.
+        fp_evals = []
+        for s in samples:
+            s_map = s.get("map_kpa", 101.325)
+            s_baro = s.get("baro_kpa", baro) or baro
+            s_man_psi = (s_map - s_baro) * 0.145038
+            raw_fp = s.get("fuel_pressure")
+            s_fp = float(raw_fp) if (raw_fp is not None and raw_fp > 0.0) else (self.base_fuel_psi + s_man_psi)
+            m = compute_manifold_referenced_fuel_metrics(
+                fuel_psi_gauge=s_fp,
+                map_kpa=s_map,
+                baro_kpa=s_baro,
+                base_fuel_psi=self.base_fuel_psi,
+            )
+            fp_evals.append((s_map, s_fp, float(m["differential_psi"]), bool(m["fp_drop"])))
+
+        min_diff_fp = min(x[2] for x in fp_evals)
+        # Find rail pressure at peak MAP sample
+        peak_map_eval = max(fp_evals, key=lambda x: x[0])
+        fp_at_peak_boost = peak_map_eval[1]
+        min_fp = min(x[1] for x in fp_evals)
 
         # 4L80E & Yank 3600 Converter & Sloppy Transbrake metrics
         staging_rows = [s for s in samples if is_sloppy_transbrake_staging(s)]
@@ -704,7 +798,8 @@ class PostPullDetector:
             top_gear = max((int(round(s.get("trans_gear", 0))) for s in samples), default=0)
 
         expected_fp = self.base_fuel_psi + peak_boost
-        fp_ok = (min_fp < 15.0) or (min_fp >= (expected_fp - 6.0))
+        # True 1:1 boost-referenced check: injector differential pressure (Rail - Boost) must stay >= 52.0 PSI (within 6 PSI of 58 PSI base)
+        fp_ok = not any(x[3] for x in fp_evals)
 
         # Evaluate Fairmont Boost Safety Rules (17.0 PSI low-E cut / 20.0 PSI max E85)
         boost_limit_psi = 20.0 if ethanol_pct >= 65.0 else 17.0
@@ -736,7 +831,7 @@ class PostPullDetector:
         if not fp_ok:
             severity = "critical"
             verdict_parts.append(
-                f"WARNING: Racetronix 420 rail pressure dropped to {min_fp:.1f} psi (expected {expected_fp:.0f} psi @ 58+1:1). Do NOT add VE!"
+                f"WARNING: 1:1 boost-referenced differential fuel pressure sagged to {min_diff_fp:.1f} psi (Rail {fp_at_peak_boost:.1f} vs {expected_fp:.1f} psi expected @ peak boost). Do NOT add VE!"
             )
         if max_duty >= 85.0:
             severity = "warning" if severity != "critical" else "critical"
@@ -768,6 +863,8 @@ class PostPullDetector:
             "avg_cl_comp_pct": round(avg_cl, 1),
             "avg_learn_pct": round(avg_learn, 1),
             "min_fuel_pressure_psi": round(min_fp, 1),
+            "fp_at_peak_boost_psi": round(fp_at_peak_boost, 1),
+            "min_differential_fuel_psi": round(min_diff_fp, 1),
             "expected_fuel_pressure_psi": round(expected_fp, 1),
             "fuel_pressure_ok": fp_ok,
             "max_injector_duty_pct": round(max_duty, 1),

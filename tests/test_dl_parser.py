@@ -106,9 +106,33 @@ class TestHolleyDatalogParser:
             VETableOptimizer,
             PostPullDetector,
             compute_4l80e_converter_metrics,
+            compute_manifold_referenced_fuel_metrics,
             estimate_wideband_transport_delay_s,
             is_sloppy_transbrake_staging,
         )
+
+        # Verify 1:1 manifold/boost-referenced fuel pressure across vacuum AND boost:
+        # At 45 kPa vacuum (-8.17 psig), rail is 49.83 psig -> differential across injector tip is 58.0 psi!
+        vac_fp = compute_manifold_referenced_fuel_metrics(fuel_psi_gauge=49.83, map_kpa=45.0, baro_kpa=101.325, base_fuel_psi=58.0)
+        assert vac_fp["differential_psi"] == pytest.approx(58.0, abs=0.1)
+        assert vac_fp["fp_drop"] is False
+
+        # At +15.0 psi boost (204.75 kPa), rail rises 1:1 to 73.0 psig -> differential is STILL 58.0 psi!
+        boost_fp = compute_manifold_referenced_fuel_metrics(fuel_psi_gauge=73.0, map_kpa=204.75, baro_kpa=101.325, base_fuel_psi=58.0)
+        assert boost_fp["differential_psi"] == pytest.approx(58.0, abs=0.1)
+        assert boost_fp["fp_drop"] is False
+
+        # Verify spooling pull (0 psi boost @ 58 psig rail -> +15 psi boost @ 73 psig rail) has zero false FP drop alerts:
+        detector = PostPullDetector(base_fuel_psi=58.0)
+        spool_pull = [
+            {"rpm": 3200.0, "map_kpa": 101.325, "baro_kpa": 101.325, "tps": 100.0, "fuel_pressure": 58.0, "afr_avg": 11.8, "target_afr": 11.8},
+            {"rpm": 4500.0, "map_kpa": 156.48,  "baro_kpa": 101.325, "tps": 100.0, "fuel_pressure": 66.0, "afr_avg": 11.6, "target_afr": 11.6},
+            {"rpm": 6000.0, "map_kpa": 204.75,  "baro_kpa": 101.325, "tps": 100.0, "fuel_pressure": 73.0, "afr_avg": 11.5, "target_afr": 11.5},
+        ]
+        spool_card = detector.build_scorecard(spool_pull, duration_s=3.5)
+        assert spool_card["fuel_pressure_ok"] is True
+        assert spool_card["min_differential_fuel_psi"] == pytest.approx(58.0, abs=0.1)
+        assert spool_card["fp_at_peak_boost_psi"] == pytest.approx(73.0, abs=0.1)
 
         # Verify velocity-dependent Wideband O2 transport delay (100ms - 150ms)
         idle_lag = estimate_wideband_transport_delay_s(rpm=850.0, map_kpa=45.0)
