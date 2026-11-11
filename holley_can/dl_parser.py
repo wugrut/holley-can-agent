@@ -416,13 +416,27 @@ class HolleyDatalogParser:
 
 def discover_local_holley_files(extra_dirs: Optional[List[str | Path]] = None) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Scan standard Windows Holley Terminator X V3 directories for .dl, .dlz, and .terx files.
+    Scan standard Windows Holley Terminator X V3 directories, Google Drive,
+    and removable drives for .dl, .dlz, .terx, .hefi, and .gcfgx files.
     """
     home = Path.home()
     search_roots: List[Path] = [
         home / "OneDrive" / "Documents" / "Holley",
         home / "Documents" / "Holley",
+        Path("G:/My Drive/Holley"),
+        Path("./data"),
+        Path("./data/uploads"),
     ]
+
+    # Check removable drive letters (D:, E:, F:, G:) for Holley SD cards
+    if os.name == "nt":
+        for letter in ["D", "E", "F", "G", "H"]:
+            drive = Path(f"{letter}:/")
+            if drive.exists():
+                holley_sub = drive / "Holley"
+                if holley_sub.exists():
+                    search_roots.append(holley_sub)
+
     if extra_dirs:
         for d in extra_dirs:
             p = Path(d)
@@ -433,13 +447,15 @@ def discover_local_holley_files(extra_dirs: Optional[List[str | Path]] = None) -
     tunes: List[Dict[str, Any]] = []
     seen: set[str] = set()
 
+    tune_extensions = (".terx", ".hefi", ".gcfgx")
+
     for root in search_roots:
         if not root.exists():
             continue
         for dirpath, _, filenames in os.walk(root):
             for fn in filenames:
                 ext = os.path.splitext(fn)[1].lower()
-                if ext not in (".dl", ".dlz", ".terx"):
+                if ext not in (".dl", ".dlz", *tune_extensions):
                     continue
                 full_path = Path(dirpath) / fn
                 norm = str(full_path.resolve())
@@ -454,10 +470,11 @@ def discover_local_holley_files(extra_dirs: Optional[List[str | Path]] = None) -
                         "size_bytes": stat.st_size,
                         "modified": stat.st_mtime,
                         "folder": Path(dirpath).name,
+                        "type": "tune" if ext in tune_extensions else "datalog",
                     }
                     if ext in (".dl", ".dlz"):
                         datalogs.append(entry)
-                    elif ext == ".terx":
+                    elif ext in tune_extensions:
                         tunes.append(entry)
                 except OSError:
                     pass

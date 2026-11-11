@@ -129,10 +129,102 @@ def create_app(
 ) -> FastAPI:
     ve_optimizer = VETableOptimizer(base_fuel_psi=58.0)
     pull_detector = PostPullDetector(base_fuel_psi=58.0)
+    gemini_agent = GeminiAgent(ve_optimizer=ve_optimizer)
+
+    async def _on_auto_event(event: Dict[str, Any]):
+        """Zero-touch handler triggered when a Holley datalog or tune file is saved."""
+        event_type = event.get("type")
+        if event_type == "datalog_auto_ingested":
+            log_name = event.get("log_name", "datalog")
+            log_path = event.get("path")
+            scorecard = event.get("scorecard")
+
+            # 1. Sync fresh 16x16 VE Table to disk for Ctrl+V
+            try:
+                tsv = ve_optimizer.export_holley_tsv(include_learn=True)
+                for export_target in [Path("."), Path("G:/My Drive/Holley")]:
+                    if export_target.exists():
+                        (export_target / "COPY 16x16 VE TABLE (CTRL+V)").write_text(tsv, encoding="utf-8")
+                        (export_target / "COPY 16x16 VE TABLE (CTRL+V).txt").write_text(tsv, encoding="utf-8")
+            except Exception as e:
+                logger.debug("Auto-export clipboard file error: %s", e)
+
+            # 2. Trigger automated Gemini run evaluation
+            gemini_answer = None
+            try:
+                prompt = (
+                    f"AUTOMATED POST-PULL AUDIT: A new Holley datalog '{log_name}' was just saved by the tuner.\n"
+                )
+                if scorecard:
+                    prompt += (
+                        f"• Peak Boost: {scorecard.get('peak_boost_psi', 0):.1f} PSI @ {scorecard.get('peak_rpm', 0):.0f} RPM\n"
+                        f"• Average AFR: {scorecard.get('avg_afr', 0):.2f} vs Target {scorecard.get('avg_target_afr', 0):.2f} (Error: {scorecard.get('afr_error', 0):+.2f})\n"
+                        f"• Minimum Fuel Pressure: {scorecard.get('min_fuel_psi', 0):.1f} PSI (effective rail differential: {scorecard.get('min_delta_psi', 0):.1f} PSI vs 58 PSI target)\n"
+                        f"• Max Injector Duty Cycle: {scorecard.get('max_duty_pct', 0):.1f}%\n"
+                    )
+                prompt += (
+                    "Audit this run: confirm if 1:1 boost-referenced fuel pressure held safe, "
+                    "summarize wideband tracking, and give 2-3 specific tuning takeaways for the next pass."
+                )
+                gemini_res = await gemini_agent.ask(
+                    question=prompt,
+                    datalog_path=log_path,
+                )
+                gemini_answer = gemini_res.get("answer")
+            except Exception as e:
+                logger.warning("Auto Gemini evaluation error: %s", e)
+
+            # 3. Broadcast to all open WebSocket clients
+            matrix_payload = ve_optimizer.get_matrix_payload(include_learn=True)
+            matrix_payload["scorecards"] = pull_detector.recent_scorecards
+            auto_msg = json.dumps({
+                "type": "auto_pull_analyzed",
+                "log_name": log_name,
+                "scorecard": scorecard,
+                "gemini_answer": gemini_answer,
+                "matrix": matrix_payload,
+                "timestamp": time.time(),
+            })
+            for ws in list(broadcaster.connections):
+                try:
+                    await ws.send_text(auto_msg)
+                except Exception:
+                    pass
+
+        elif event_type == "tune_auto_detected":
+            tune_name = event.get("tune_name", "tune")
+            tune_path = event.get("path")
+            gemini_answer = None
+            try:
+                prompt = (
+                    f"AUTOMATED CALIBRATION AUDIT: A Holley tune file '{tune_name}' was just updated or loaded.\n"
+                    f"Audit this calibration against the 1980 Fairmont Turbo LS build: 58 PSI base mechanical rail (1:1 boost ref), "
+                    f"Siemens Deka 80s, 4L80E transbrake staging (3000-3200 RPM @ 0-5° BTDC), and standard boost limit of 15-17 PSI. "
+                    f"Highlight any critical safety settings or table limits the tuner should verify."
+                )
+                gemini_res = await gemini_agent.ask(question=prompt)
+                gemini_answer = gemini_res.get("answer")
+            except Exception as e:
+                logger.debug("Tune auto-audit error: %s", e)
+
+            auto_msg = json.dumps({
+                "type": "auto_tune_detected",
+                "tune_name": tune_name,
+                "path": tune_path,
+                "gemini_answer": gemini_answer,
+                "timestamp": time.time(),
+            })
+            for ws in list(broadcaster.connections):
+                try:
+                    await ws.send_text(auto_msg)
+                except Exception:
+                    pass
+
     handoff_watcher = AutoHandoffWatcher(
         listener=listener,
         ve_optimizer=ve_optimizer,
         pull_detector=pull_detector,
+        on_event_callback=_on_auto_event,
     )
     _last_opt_sample_ts = 0.0
 
@@ -595,8 +687,6 @@ def create_app(
         return StreamingResponse(generate_csv(), media_type="text/csv", headers=headers)
 
     # ── AI Copilot ("Ask Your Engine" powered by Gemini 2.5) ─────────────
-
-    gemini_agent = GeminiAgent(ve_optimizer=ve_optimizer)
 
     @app.post("/api/copilot/ask")
     async def copilot_ask(payload: dict):

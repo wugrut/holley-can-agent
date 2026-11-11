@@ -571,7 +571,7 @@ function showToast(msg) {
     setTimeout(() => toast.remove(), 2600);
 }
 
-// ─── Passive WebSocket ──────────────────────────────────────────────────────
+// ─── Passive WebSocket & Auto-Watch Coordinator ─────────────────────────────
 
 function initWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -589,8 +589,49 @@ function initWebSocket() {
         ws.onmessage = (e) => {
             try {
                 const msg = JSON.parse(e.data);
-                // When datalogs auto-ingest or scorecard alerts arrive, reload VE table
-                if (msg.alerts && msg.alerts.some(a => a.alert_type === 'post_pull_scorecard')) {
+
+                // 1. Zero-Touch Auto-Pull Analyzed Event
+                if (msg.type === 'auto_pull_analyzed') {
+                    if (msg.matrix) {
+                        renderVEMatrix(msg.matrix);
+                    }
+                    const nameEl = document.getElementById('active-log-name');
+                    const metaEl = document.getElementById('active-log-meta');
+                    if (nameEl) nameEl.textContent = `📄 ${msg.log_name}`;
+                    if (metaEl && msg.scorecard) {
+                        metaEl.textContent = `Auto-Ingested • Peak Boost: ${msg.scorecard.peak_boost_psi.toFixed(1)} PSI @ ${Math.round(msg.scorecard.peak_rpm)} RPM`;
+                    }
+                    showToast(`🏁 New Pass Auto-Ingested: ${msg.log_name} (VE Table Ready!)`);
+
+                    // Append Gemini Auto-Pilot message to chat
+                    if (msg.gemini_answer) {
+                        appendAutoPilotMessage(msg.log_name, msg.gemini_answer, msg.scorecard);
+                    }
+
+                    // Optional Audible Speech Announcement
+                    if (window.speechSynthesis) {
+                        try {
+                            const sc = msg.scorecard;
+                            const text = sc
+                                ? `New pass ingested. ${sc.peak_boost_psi.toFixed(1)} PSI boost. Fuel pressure differential held safe. Updated VE table ready to paste.`
+                                : 'New pass ingested. Updated VE table ready to paste.';
+                            const utter = new SpeechSynthesisUtterance(text);
+                            utter.rate = 1.05;
+                            window.speechSynthesis.speak(utter);
+                        } catch (sErr) {}
+                    }
+                }
+
+                // 2. Zero-Touch Auto-Tune Detected Event
+                else if (msg.type === 'auto_tune_detected') {
+                    showToast(`📋 Holley Calibration Detected: ${msg.tune_name}`);
+                    if (msg.gemini_answer) {
+                        appendCalibrationAuditMessage(msg.tune_name, msg.gemini_answer);
+                    }
+                }
+
+                // 3. Fallback scorecard alerts from live CAN stream
+                else if (msg.alerts && msg.alerts.some(a => a.alert_type === 'post_pull_scorecard')) {
                     loadVEMatrix();
                 }
             } catch (err) {
@@ -605,6 +646,61 @@ function initWebSocket() {
     }
 
     connect();
+}
+
+function appendAutoPilotMessage(logName, answerText, scorecard) {
+    const feed = document.getElementById('chat-feed');
+    if (!feed) return;
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg assistant';
+
+    let headerBadge = '';
+    if (scorecard) {
+        headerBadge = `<span class="badge" style="margin-left:8px;background:rgba(0,230,118,0.15);color:#00e676;">Peak ${scorecard.peak_boost_psi.toFixed(1)} PSI</span>`;
+    }
+
+    msg.innerHTML = `
+        <div class="msg-header">
+            <span class="msg-icon">✨</span>
+            <strong class="msg-author">GEMINI AUTO-PILOT</strong>
+            ${headerBadge}
+            <span class="msg-time">${timeStr}</span>
+        </div>
+        <div class="msg-body" style="border-left: 2px solid #00e676; padding-left: 8px;">
+            <div style="font-size: 11px; color: #a0aec0; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace;">
+                ⚡ Auto-Ingested Run: <strong>${escapeHtml(logName)}</strong>
+            </div>
+            ${formatMarkdown(answerText)}
+        </div>
+    `;
+    feed.appendChild(msg);
+    feed.scrollTop = feed.scrollHeight;
+}
+
+function appendCalibrationAuditMessage(tuneName, answerText) {
+    const feed = document.getElementById('chat-feed');
+    if (!feed) return;
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg assistant';
+    msg.innerHTML = `
+        <div class="msg-header">
+            <span class="msg-icon">🛡️</span>
+            <strong class="msg-author">CALIBRATION SAFETY AUDIT</strong>
+            <span class="msg-time">${timeStr}</span>
+        </div>
+        <div class="msg-body" style="border-left: 2px solid #00e5ff; padding-left: 8px;">
+            <div style="font-size: 11px; color: #a0aec0; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace;">
+                📁 Loaded Holley Tune: <strong>${escapeHtml(tuneName)}</strong>
+            </div>
+            ${formatMarkdown(answerText)}
+        </div>
+    `;
+    feed.appendChild(msg);
+    feed.scrollTop = feed.scrollHeight;
 }
 
 // ─── Markdown Formatter ────────────────────────────────────────────────────

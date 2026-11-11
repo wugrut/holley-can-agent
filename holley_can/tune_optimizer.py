@@ -945,6 +945,7 @@ class AutoHandoffWatcher:
         self.last_auto_ingested_log = Path(path).name
         return {
             "log_name": Path(path).name,
+            "path": path,
             "rows": len(rows),
             "scorecard": scorecard,
         }
@@ -962,6 +963,8 @@ class AutoHandoffWatcher:
                     self.handoff_mode = "standby_auto_watch"
 
                 files = discover_local_holley_files()
+
+                # 1. Watch Datalogs (.dl / .dlz)
                 for dl in files.get("datalogs", []):
                     p = dl["path"]
                     mtime = dl["modified"]
@@ -979,9 +982,25 @@ class AutoHandoffWatcher:
                                 **result,
                             })
 
+                # 2. Watch Calibration / Tune Files (.terx / .hefi / .gcfgx)
+                for tune in files.get("tunes", []):
+                    p = tune["path"]
+                    mtime = tune["modified"]
+                    prev_mtime = self._seen_mtimes.get(p)
+                    if prev_mtime is None or mtime > prev_mtime + 0.5:
+                        self._seen_mtimes[p] = mtime
+                        logger.info("Auto-detected Holley tune file: %s", tune["name"])
+                        if self.on_event_callback:
+                            await self.on_event_callback({
+                                "type": "tune_auto_detected",
+                                "tune_name": tune["name"],
+                                "path": p,
+                                "size_bytes": tune.get("size_bytes", 0),
+                            })
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.debug("AutoHandoffWatcher tick error: %s", e)
 
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(1.5)
