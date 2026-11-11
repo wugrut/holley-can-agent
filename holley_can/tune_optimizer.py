@@ -260,6 +260,7 @@ class VETableOptimizer:
         self.dfco_rejected_samples = 0
         self.cold_rejected_samples = 0
         self.staging_rejected_samples = 0
+        self.enrichment_rejected_samples = 0
         self.last_source: str = "live"
 
         # State for rate-of-change (dTPS/dt, dMAP/dt) & wideband transport delay buffer
@@ -296,6 +297,7 @@ class VETableOptimizer:
         self.dfco_rejected_samples = 0
         self.cold_rejected_samples = 0
         self.staging_rejected_samples = 0
+        self.enrichment_rejected_samples = 0
         self._prev_ts = None
         self._prev_tps = None
         self._prev_map = None
@@ -352,6 +354,20 @@ class VETableOptimizer:
         if not allow_cold and (0.1 < clt < self.min_coolant_f):
             self.filtered_samples += 1
             self.cold_rejected_samples += 1
+            return False
+
+        # 3b. Exclude temporary ECU enrichments (Afterstart Enrichment, Warmup Coolant Enrichment, Coolant AFR Offset)
+        # In Holley EFI, enrichments report either 0.0% (delta) or 100.0% (multiplier) when inactive.
+        afterstart = row.get("afterstart_enrich", 0.0)
+        clt_enrich = row.get("coolant_enrich", 0.0)
+        clt_afr_off = abs(row.get("coolant_afr_offset", 0.0))
+        afterstart_active = (0.5 < abs(afterstart) < 99.0) or (abs(afterstart - 100.0) > 1.0 and afterstart > 90.0)
+        clt_enrich_active = not allow_cold and (
+            (0.5 < abs(clt_enrich) < 99.0) or (abs(clt_enrich - 100.0) > 1.0 and clt_enrich > 90.0) or (clt_afr_off > 0.15)
+        )
+        if afterstart_active or clt_enrich_active:
+            self.filtered_samples += 1
+            self.enrichment_rejected_samples += 1
             return False
 
         # 4. Exclude 3rd-Gear "Sloppy Transbrake" staging limiter samples from corrupting steady VE
@@ -452,12 +468,15 @@ class VETableOptimizer:
                 self.ingest_row(r, allow_cold=True)
         return self.get_matrix_payload()
 
-    def get_matrix_payload(self) -> Dict[str, Any]:
+    def get_matrix_payload(self, include_learn: bool = True) -> Dict[str, Any]:
         """
         Returns the full 16x16 matrix (ordered top-to-bottom from highest MAP 260 kPa
         down to 20 kPa, matching Holley Terminator X V3's visual Fuel VE table layout)
-        using the Fairmont VE Optimizer mathematical correction:
-            New_VE = Current_VE * (1.0 + (CL_Comp_Percent / 100.0))
+        using the Fairmont VE Optimizer multiplicative transfer function:
+          - If include_learn=True (Fold Learn Table + CL Comp into Base VE; reset Learn after pasting):
+              M_total = (1 + Learn/100) * (1 + CL_Comp/100) * (1 + Residual_AFR_Err) - 1
+          - If include_learn=False (Apply only active CL Comp / Residual AFR Err; keep existing Learn Table):
+              M_total = (1 + CL_Comp/100) * (1 + Residual_AFR_Err) - 1
         targeting steady-state closed-loop trim error within ±2.0%.
         """
         rows_out: List[Dict[str, Any]] = []
@@ -465,6 +484,7 @@ class VETableOptimizer:
         cells_needing_change = 0
         fp_warning_cells = 0
         knock_cells = 0
+        cells_with_active_learn = 0
 
         tsv_ve_lines: List[str] = []
         tsv_corr_lines: List[str] = []
@@ -487,6 +507,8 @@ class VETableOptimizer:
                         "base_ve": default_ve,
                         "recommended_ve": default_ve,
                         "correction_pct": 0.0,
+                        "cl_comp_pct": 0.0,
+                        "learn_pct": 0.0,
                         "afr_avg": None,
                         "target_afr": None,
                         "fp_warning": False,
@@ -505,17 +527,25 @@ class VETableOptimizer:
                 avg_fp = acc.sum_fuel_psi / acc.hits
                 avg_knock = acc.sum_knock / acc.hits
 
-                # Fairmont VE Optimizer Mathematical Correction:
-                # Primary trim is Closed-Loop Compensation % (plus active Learn % if transferred).
-                # If both CL_Comp and Learn are 0.0 (e.g. open-loop WOT), use wideband AFR error %.
-                afr_err_pct = ((avg_afr - avg_target) / max(avg_target, 8.0)) * 100.0
-                if abs(avg_cl) > 0.05 or abs(avg_learn) > 0.05:
-                    cl_comp_percent = avg_cl + avg_learn
-                    # Include residual steady-state AFR error if CL hasn't finished converging
-                    if abs(afr_err_pct) > 1.0:
-                        cl_comp_percent += 0.5 * afr_err_pct
+                if abs(avg_learn) >= 0.5:
+                    cells_with_active_learn += 1
+
+                # Multiplicative ECU Fuel Trim + Residual Wideband Error:
+                # Delivered_Fuel = Base_VE * (1 + Learn/100) * (1 + CL_Comp/100)
+                afr_err_ratio = (avg_afr - avg_target) / max(avg_target, 8.0)
+                learn_mult = (1.0 + (avg_learn / 100.0)) if include_learn else 1.0
+                cl_mult = 1.0 + (avg_cl / 100.0)
+
+                # When Closed Loop is active (|avg_cl| > 0.05), CL_Comp already reflects most of the instant error,
+                # plus any uncompensated residual AFR error if CL_Comp is clamped or still converging.
+                if abs(avg_cl) > 0.05 or (include_learn and abs(avg_learn) > 0.05):
+                    res_mult = (1.0 + 0.5 * afr_err_ratio) if abs(afr_err_ratio) > 0.01 else 1.0
+                    total_mult = (learn_mult * cl_mult * res_mult) - 1.0
                 else:
-                    cl_comp_percent = afr_err_pct
+                    # Open-loop or zero CL/Learn: use direct wideband AFR error ratio
+                    total_mult = (learn_mult * (1.0 + afr_err_ratio)) - 1.0
+
+                cl_comp_percent = total_mult * 100.0
 
                 # Clamp single-pass correction to ±20% for safety
                 clamped_corr_pct = max(-20.0, min(20.0, cl_comp_percent))
@@ -545,6 +575,8 @@ class VETableOptimizer:
                     "base_ve": round(avg_base_ve, 1),
                     "recommended_ve": rec_ve,
                     "correction_pct": round(clamped_corr_pct, 1),
+                    "cl_comp_pct": round(avg_cl, 1),
+                    "learn_pct": round(avg_learn, 1),
                     "afr_avg": round(avg_afr, 2),
                     "target_afr": round(avg_target, 2),
                     "fuel_psi": round(avg_fp, 1),
@@ -566,6 +598,13 @@ class VETableOptimizer:
             "platform": FAIRMONT_PLATFORM_SPEC["vehicle"],
             "engine": FAIRMONT_PLATFORM_SPEC["engine"],
             "source": self.last_source,
+            "include_learn": include_learn,
+            "cells_with_active_learn": cells_with_active_learn,
+            "learn_action_notice": (
+                "Fuel Learn % is INCLUDED in these VE values. After pasting into Base Fuel VE, click 'Reset Learn Table' in Terminator X.exe so the ECU does not double-apply Learn!"
+                if include_learn
+                else "Fuel Learn % is EXCLUDED (only Closed-Loop Comp & Wideband AFR error applied). Leave your ECU Fuel Learn table as-is, or use this after clicking 'Transfer Learn to Base'."
+            ),
             "base_fuel_psi": self.base_fuel_psi,
             "min_coolant_f": self.min_coolant_f,
             "steady_trim_target_pct": self.steady_trim_target_pct,
@@ -575,6 +614,7 @@ class VETableOptimizer:
                 "transient_roc_rejected": self.transient_rejected_samples,
                 "dfco_rejected": self.dfco_rejected_samples,
                 "cold_engine_rejected": self.cold_rejected_samples,
+                "enrichment_modifier_rejected": self.enrichment_rejected_samples,
                 "sloppy_transbrake_staging_rejected": self.staging_rejected_samples,
             },
             "cells_touched": cells_touched,

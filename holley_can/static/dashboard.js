@@ -2280,11 +2280,16 @@ let lastOptimizerMatrix = null;
 
 async function refreshOptimizerModal() {
     const statusEl = document.getElementById('opt-copy-status');
+    const learnChk = document.getElementById('opt-include-learn');
+    const includeLearn = learnChk ? learnChk.checked : true;
     try {
-        const res = await fetch('/api/optimizer/matrix');
+        const res = await fetch(`/api/optimizer/matrix?include_learn=${includeLearn}`);
         const data = await res.json();
         lastOptimizerMatrix = data;
         renderOptimizerMatrix(data);
+        if (statusEl && data.learn_action_notice) {
+            statusEl.textContent = data.learn_action_notice;
+        }
     } catch (e) {
         if (statusEl) statusEl.textContent = 'Error loading optimizer matrix';
     }
@@ -2339,7 +2344,7 @@ function renderOptimizerMatrix(data) {
                 }
                 sub = `<div style="font-size:9px; opacity:0.85;">${c > 0 ? '+' : ''}${c}%</div>`;
             }
-            bodyHtml += `<td title="RPM: ${cell.rpm} | MAP: ${cell.map_kpa} kPa | Hits: ${cell.hits} | Base VE: ${cell.base_ve}% -> New VE: ${cell.recommended_ve}% (${cell.correction_pct}%)" style="padding:3px 2px; background:${bg}; color:${fg}; border:1px solid rgba(255,255,255,0.05);">
+            bodyHtml += `<td title="RPM: ${cell.rpm} | MAP: ${cell.map_kpa} kPa | Hits: ${cell.hits} | Base VE: ${cell.base_ve}% | CL Comp: ${cell.cl_comp_pct || 0}% | Learn: ${cell.learn_pct || 0}% -> New VE: ${cell.recommended_ve}% (${cell.correction_pct}%)" style="padding:3px 2px; background:${bg}; color:${fg}; border:1px solid rgba(255,255,255,0.05);">
                 <div style="font-weight:600;">${cell.recommended_ve.toFixed(1)}</div>${sub}
             </td>`;
         }
@@ -2356,7 +2361,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const copyCorrBtn = document.getElementById('btn-opt-copy-corr');
     const loadDlBtn = document.getElementById('btn-opt-load-dl');
     const resetBtn = document.getElementById('btn-opt-reset');
+    const learnChk = document.getElementById('opt-include-learn');
     const statusEl = document.getElementById('opt-copy-status');
+
+    if (learnChk) {
+        learnChk.addEventListener('change', () => refreshOptimizerModal());
+    }
 
     if (optBtn && optModal) {
         optBtn.addEventListener('click', () => {

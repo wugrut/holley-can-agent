@@ -424,6 +424,10 @@
                         <button type="button" id="btn-opt-reset" class="action-btn secondary-btn">
                             🗑️ Reset Pass
                         </button>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #e2e8f0; cursor: pointer; margin-left: 6px;" title="When checked, both ECU Fuel Learn % and Closed-Loop Comp % are folded into the recommended Base VE table (remember to click 'Reset Learn Table' in Holley after pasting!). Uncheck if you already transferred Learn or want only Closed-Loop Comp applied.">
+                            <input type="checkbox" id="opt-include-learn" checked style="accent-color: #00e676;">
+                            <span>Fold Fuel Learn % into Base VE</span>
+                        </label>
                     </div>
                     <div id="opt-copy-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: #00e676;">
                         Ready — 58 PSI Base + 1:1 Boost Fuel Pressure Protected

@@ -428,9 +428,9 @@ def create_app(
     # ── AI Tune Optimizer (16x16 VE Matrix + Ctrl+V TSV + Post-Pull) ────
 
     @app.get("/api/optimizer/matrix")
-    async def get_optimizer_matrix():
+    async def get_optimizer_matrix(include_learn: bool = Query(True, description="Whether to fold Fuel Learn % into Base VE recommendations")):
         """Returns the 16x16 VE Hit & Correction Matrix, Holley TSV clipboard string, and Post-Pull scorecards."""
-        payload = ve_optimizer.get_matrix_payload()
+        payload = ve_optimizer.get_matrix_payload(include_learn=include_learn)
         payload["handoff_mode"] = handoff_watcher.handoff_mode
         payload["last_auto_ingested_log"] = handoff_watcher.last_auto_ingested_log
         payload["scorecards"] = pull_detector.recent_scorecards
