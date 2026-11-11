@@ -227,12 +227,25 @@
     <aside id="copilot-drawer" class="copilot-drawer hidden" aria-label="EFI Intelligence Copilot">
         <div class="copilot-header">
             <div class="copilot-header-title">
-                <span class="copilot-badge">AI COPILOT</span>
-                <h3>Ask Your Engine</h3>
+                <span class="copilot-badge" id="copilot-badge">GEMINI EFI COPILOT</span>
+                <span id="copilot-engine-indicator" style="font-size: 11px; padding: 2px 7px; border-radius: 10px; background: rgba(0, 229, 255, 0.15); color: #00e5ff; font-family: 'JetBrains Mono', monospace;">Connecting...</span>
+                <button type="button" id="btn-copilot-key-settings" style="background: none; border: none; cursor: pointer; font-size: 14px; opacity: 0.8;" title="Configure Gemini API Key">🔑</button>
             </div>
             <button id="copilot-close" class="copilot-close-btn"
                     data-tooltip-title="CLOSE COPILOT"
                     data-tooltip-desc="Close the AI assistant panel.">✕</button>
+        </div>
+
+        <!-- Gemini API Key Config Bar (Collapsible) -->
+        <div id="copilot-key-panel" class="hidden" style="padding: 10px 14px; background: rgba(0, 0, 0, 0.4); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+            <div style="font-size: 11.5px; color: #a0aec0; margin-bottom: 6px;">
+                Enter Google Gemini API Key (saved in local browser storage):
+            </div>
+            <div style="display: flex; gap: 6px;">
+                <input type="password" id="input-gemini-key" placeholder="AIzaSy..." style="flex: 1; padding: 5px 8px; font-size: 11px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #fff; font-family: 'JetBrains Mono', monospace;">
+                <button type="button" id="btn-save-gemini-key" style="padding: 5px 10px; font-size: 11px; font-weight: 600; background: #00e5ff; color: #050a14; border: none; border-radius: 4px; cursor: pointer;">Save</button>
+            </div>
+            <div id="gemini-key-status" style="font-size: 10.5px; margin-top: 4px; color: #00e676;"></div>
         </div>
 
         <!-- Live Telemetry Snapshot Strip -->
@@ -247,12 +260,12 @@
         <!-- Quick Suggested Diagnostic Chips -->
         <div class="copilot-chips-header">QUICK DIAGNOSTIC PROMPTS</div>
         <div class="copilot-chips" id="copilot-chips">
-            <button type="button" class="copilot-chip" data-query="Why is my idle hunting or surging?">🔍 Idle Stability</button>
-            <button type="button" class="copilot-chip" data-query="Analyze fuel learn and closed-loop trims">⛽ Fuel Learn</button>
-            <button type="button" class="copilot-chip" data-query="Check boost and air-fuel ratio safety margin">📈 Boost & AFR</button>
-            <button type="button" class="copilot-chip" data-query="Are there any active warnings or faults?">🚨 Active Alarms</button>
-            <button type="button" class="copilot-chip" data-query="Check electrical and alternator charging voltage">🔋 Battery</button>
-            <button type="button" class="copilot-chip" data-query="Summarize current engine health">📋 Health Brief</button>
+            <button type="button" class="copilot-chip" data-query="Audit my fuel pressure: is it rising 1:1 with boost to 58 PSI base?">⛽ 1:1 Fuel Pressure</button>
+            <button type="button" class="copilot-chip" data-query="Analyze my last WOT datalog pull and check AFR safety margin">📈 WOT Pull & AFR</button>
+            <button type="button" class="copilot-chip" data-query="Generate a 16x16 VE table correction with learn trims folded in">🎯 16×16 VE Trim Map</button>
+            <button type="button" class="copilot-chip" data-query="Why is my idle hunting or surging around 900 RPM?">🔍 Idle Stability</button>
+            <button type="button" class="copilot-chip" data-query="Check transbrake staging stability (3000-3200 RPM @ 0-5° BTDC)">🏎️ Staging & Transbrake</button>
+            <button type="button" class="copilot-chip" data-query="Did the 4L80E converter slip excessively under boost?">⚙️ 4L80E Converter</button>
         </div>
 
         <!-- Chat History Area -->

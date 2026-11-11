@@ -77,10 +77,13 @@ def build():
         f"--add-data={dbc_data}",
         f"--add-data={fixtures_data}",
         f"--add-data={csv_data}",
-        # CAN Backends & Datalog Parser & Tune Optimizer
+        # CAN Backends & Datalog Parser & Tune Optimizer & Gemini
         "--hidden-import=app.hardware.holley_usbcan",
         "--hidden-import=holley_can.dl_parser",
         "--hidden-import=holley_can.tune_optimizer",
+        "--hidden-import=holley_can.gemini_agent",
+        "--hidden-import=google.genai",
+        "--hidden-import=google.genai.types",
         "--hidden-import=can.interfaces.pcan",
         "--hidden-import=can.interfaces.slcan",
         "--hidden-import=can.interfaces.virtual",

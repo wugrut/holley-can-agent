@@ -14,6 +14,9 @@ uvicorn[standard]>=0.29.0
 websockets>=12.0
 jinja2>=3.1.0
 
+# Gemini AI / LLM Agentic SDK
+google-genai>=3.2.0
+
 # Configuration
 pyyaml>=6.0
 

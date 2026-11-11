@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .alerts import Alert, AlertEngine
 from .copilot_service import CopilotService
+from .gemini_agent import GeminiAgent, GENAI_AVAILABLE
 from .listener import CANListener
 from .protocol import DecodedFrame
 from .storage import TimeSeriesStorage
@@ -564,37 +565,64 @@ def create_app(
         }
         return StreamingResponse(generate_csv(), media_type="text/csv", headers=headers)
 
-    # ── AI Copilot ("Ask Your Engine") ──────────────────────────────────
+    # ── AI Copilot ("Ask Your Engine" powered by Gemini 2.5) ─────────────
 
-    copilot_service = CopilotService()
+    gemini_agent = GeminiAgent(ve_optimizer=ve_optimizer)
 
     @app.post("/api/copilot/ask")
     async def copilot_ask(payload: dict):
-        """Processes conversational queries grounded in live ECU telemetry."""
+        """Processes conversational queries using Gemini 2.5 with grounded EFI tools."""
         question = payload.get("question", "").strip()
         if not question:
             return {"error": "Question cannot be empty."}
 
+        api_key = payload.get("api_key")
+        if api_key:
+            gemini_agent.set_api_key(api_key)
+
         snapshot = listener.get_live_snapshot()
         active_alerts = alert_engine.get_active_alerts() if alert_engine else []
-        return copilot_service.ask(
+        datalog_path = payload.get("datalog_path")
+
+        return await gemini_agent.ask(
             question=question,
-            snapshot=snapshot,
+            live_snapshot=snapshot,
             active_alerts=active_alerts,
-            stats=listener.stats,
+            datalog_path=datalog_path,
         )
+
+    @app.post("/api/copilot/set_key")
+    async def copilot_set_key(payload: dict):
+        """Dynamically sets or updates the Gemini API key."""
+        api_key = payload.get("api_key", "").strip()
+        success = gemini_agent.set_api_key(api_key)
+        return {
+            "status": "success" if success else "error",
+            "gemini_active": gemini_agent.is_gemini_active,
+            "model": gemini_agent.model_name,
+        }
+
+    @app.get("/api/copilot/status")
+    async def copilot_status():
+        """Returns current Gemini AI status and model."""
+        return {
+            "gemini_active": gemini_agent.is_gemini_active,
+            "model": gemini_agent.model_name,
+            "genai_installed": GENAI_AVAILABLE,
+            "has_api_key": bool(gemini_agent._api_key),
+        }
 
     @app.get("/api/copilot/suggestions")
     async def copilot_suggestions():
         """Returns recommended questions for quick chip prompts."""
         return {
             "suggestions": [
-                "Why is my idle hunting or surging?",
-                "Analyze fuel learn and closed-loop trims",
-                "Check boost and air-fuel ratio safety margin",
-                "Are there any active warnings or faults?",
-                "Check electrical and alternator charging voltage",
-                "Summarize current engine health",
+                "Audit my fuel pressure: is it rising 1:1 with boost to 58 PSI base?",
+                "Analyze my last WOT datalog pull and check AFR safety margin",
+                "Generate a 16x16 VE table correction with learn trims folded in",
+                "Why is my idle hunting or surging around 900 RPM?",
+                "Check transbrake staging stability (3000-3200 RPM @ 0-5° BTDC)",
+                "Did the 4L80E converter slip excessively under boost?",
             ]
         }
 

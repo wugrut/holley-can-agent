@@ -938,14 +938,81 @@ function initCopilot() {
     const submitBtn = document.getElementById('copilot-submit');
     const messagesEl = document.getElementById('copilot-messages');
     const chipsEl = document.getElementById('copilot-chips');
+    const engineBadge = document.getElementById('copilot-engine-indicator');
+    const keyToggleBtn = document.getElementById('btn-copilot-key-settings');
+    const keyPanel = document.getElementById('copilot-key-panel');
+    const keyInput = document.getElementById('input-gemini-key');
+    const keySaveBtn = document.getElementById('btn-save-gemini-key');
+    const keyStatus = document.getElementById('gemini-key-status');
 
     if (!toggleBtn || !drawer) return;
+
+    // Load saved API key from localStorage
+    const savedKey = localStorage.getItem('gemini_api_key') || '';
+    if (keyInput && savedKey) {
+        keyInput.value = savedKey;
+    }
+
+    async function checkCopilotStatus() {
+        if (!engineBadge) return;
+        try {
+            const res = await fetch('/api/copilot/status');
+            const data = await res.json();
+            if (data.gemini_active) {
+                engineBadge.textContent = '⚡ GEMINI ACTIVE';
+                engineBadge.style.color = '#00e676';
+                engineBadge.style.background = 'rgba(0, 230, 118, 0.15)';
+            } else if (data.has_api_key) {
+                engineBadge.textContent = '⚡ GEMINI INITIALIZING';
+                engineBadge.style.color = '#00e5ff';
+                engineBadge.style.background = 'rgba(0, 229, 255, 0.15)';
+            } else {
+                engineBadge.textContent = '🛡️ OFFLINE ENGINE';
+                engineBadge.style.color = '#ffb300';
+                engineBadge.style.background = 'rgba(255, 179, 0, 0.15)';
+            }
+        } catch (e) {
+            engineBadge.textContent = 'OFFLINE';
+        }
+    }
+
+    if (keyToggleBtn && keyPanel) {
+        keyToggleBtn.addEventListener('click', () => {
+            keyPanel.classList.toggle('hidden');
+        });
+    }
+
+    if (keySaveBtn && keyInput) {
+        keySaveBtn.addEventListener('click', async () => {
+            const keyVal = keyInput.value.trim();
+            localStorage.setItem('gemini_api_key', keyVal);
+            if (keyStatus) keyStatus.textContent = 'Saving API key...';
+            try {
+                const res = await fetch('/api/copilot/set_key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: keyVal }),
+                });
+                const data = await res.json();
+                if (data.gemini_active) {
+                    if (keyStatus) keyStatus.textContent = '✓ Gemini 2.5 connected successfully!';
+                    if (keyPanel) setTimeout(() => keyPanel.classList.add('hidden'), 1500);
+                } else {
+                    if (keyStatus) keyStatus.textContent = 'Key saved. Ready for offline / live requests.';
+                }
+                checkCopilotStatus();
+            } catch (e) {
+                if (keyStatus) keyStatus.textContent = 'Error saving key: ' + e.message;
+            }
+        });
+    }
 
     function openDrawer() {
         drawer.classList.remove('hidden');
         if (backdrop) backdrop.classList.remove('hidden');
         toggleBtn.classList.add('active');
         updateContextStrip();
+        checkCopilotStatus();
         if (input) input.focus();
     }
 
@@ -1063,20 +1130,25 @@ function initCopilot() {
 
         // 4. Fetch Response from API
         try {
+            const apiKey = localStorage.getItem('gemini_api_key') || '';
             const res = await fetch('/api/copilot/ask', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question }),
+                body: JSON.stringify({ question, api_key: apiKey }),
             });
             const data = await res.json();
             thinkingMsg.remove();
+
+            const isGemini = data.engine && data.engine.includes('gemini');
+            const engineLabel = isGemini ? 'GEMINI 2.5 COPILOT' : 'EFI COPILOT (OFFLINE)';
+            const engineIcon = isGemini ? '✨' : '⚡';
 
             const answerMsg = document.createElement('div');
             answerMsg.className = 'copilot-msg assistant';
             answerMsg.innerHTML = `
                 <div class="msg-author">
-                    <span class="author-icon">⚡</span>
-                    <span class="author-name">EFI INTELLIGENCE COPILOT</span>
+                    <span class="author-icon">${engineIcon}</span>
+                    <span class="author-name">${engineLabel}</span>
                     <span class="author-time">${timeStr}</span>
                 </div>
                 <div class="msg-content">${formatMarkdown(data.answer || data.error || 'No telemetry analysis available.')}</div>

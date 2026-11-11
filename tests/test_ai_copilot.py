@@ -53,3 +53,21 @@ class TestAICopilotAndTools:
             assert len(copilot.conversation_history) >= 2
 
         asyncio.run(_run())
+
+    def test_gemini_agent_tools_and_offline_fallback(self):
+        from holley_can.gemini_agent import GeminiAgent
+        agent = GeminiAgent()
+
+        specs = agent.get_vehicle_specs()
+        assert "Fairmont" in specs["vehicle"]
+        assert specs["limits"]["base_fuel_psi"] == 58.0
+
+        ve_rec = agent.get_ve_recommendations()
+        assert "total_steady_state_samples" in ve_rec
+
+        async def _test_ask():
+            res = await agent.ask("Why is my idle surging?")
+            assert "Idle Stability" in res["answer"]
+            assert res["engine"] == "offline_rule_synthesizer"
+
+        asyncio.run(_test_ask())
