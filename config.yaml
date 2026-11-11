@@ -28,7 +28,7 @@ alerts:
   lean_afr_offset: 0.5       # Trigger if wideband > target + this value
   rich_afr_offset: 1.0       # Trigger if wideband < target - this value
   timing_retard_deg: 3.0     # Trigger if timing drops > this from baseline
-  overboost_map_kpa: 250.0   # ~22 psi boost, adjust for your setup
+  overboost_map_kpa: 218.5   # 17.0 PSI boost cut safety threshold (101.325 + 17.0 * 6.89476)
   low_voltage_v: 13.0        # Battery voltage warning threshold
   sensor_dropout_s: 1.0      # Seconds without update before alert
   can_error_rate_pct: 1.0    # Error frame percentage threshold
@@ -40,14 +40,14 @@ api:
     - "*"                    # Allow all origins for local network access
 
 dashboard:
-  title: "Holley Terminator X Max"
+  title: "1980 Ford Fairmont Turbo LS — Terminator X Max"
   update_rate_ms: 50         # WebSocket push interval (20 Hz)
   gauges:
     - channel: rpm
       label: "RPM"
       min: 0
       max: 7000
-      redline: 6200
+      redline: 6800
       unit: "rpm"
     - channel: map_kpa
       label: "MAP"

@@ -275,8 +275,8 @@ async def run_copilot_session(
     duration_s: float = 15.0,
     db_path: str = "./data/copilot_sessions.db",
     out_dir: str = "./reports",
-    vehicle_name: str = "Holley Terminator X MAX Vehicle",
-    engine_spec: str = "6.0L LS V8",
+    vehicle_name: str = "1980 Ford Fairmont Turbo LS",
+    engine_spec: str = "4.8L Gen III LS (Sloppy Stage 2 + VS Racing 78/75 + 4L80E)",
 ) -> None:
     """
     Runs a full telemetry recording, baseline estimation, deterministic event detection,
@@ -496,10 +496,11 @@ def run_dashboard(
     print(f"  Dashboard:  http://{host}:{port}")
     print("  Press Ctrl+C to stop the dashboard server.\n")
 
-    # If simulator, run background telemetry thread
+    # If simulator, use built-in VirtualSimulatorAdapter inside CANListener
     if interface in ("simulator", "virtual"):
-        channel = "sim_channel"
-        interface = "virtual"
+        interface = "simulator"
+        if not channel or channel in ("sim_virtual0", "sim_channel"):
+            channel = "multi_cycle"
 
     # Initialize components
     listener = CANListener(

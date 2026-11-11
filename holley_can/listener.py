@@ -1,8 +1,10 @@
 """
-listener.py — Async CAN bus listener for HEFI broadcast traffic.
+listener.py — Async CAN bus listener for HEFI & Racepak broadcast traffic.
 
-Passively listens on a SocketCAN interface, decodes HEFI frames in real time,
-and distributes decoded data to storage, WebSocket broadcast, and alert engine.
+Passively listens on a Holley WinUSB cable, SocketCAN, SLCAN, or Virtual Simulator
+interface, auto-detects Holley Standard (HEFI IEEE-754 float32) vs Racepak
+(int32BE / 256) broadcast frames in real time, and distributes decoded data
+to storage, WebSocket broadcast, and alert engine.
 """
 
 from __future__ import annotations
@@ -12,19 +14,21 @@ import logging
 import sys
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Optional
 
 import can
-from can import Message
 
 from .protocol import (
+    CHANNEL_BY_NAME,
     CHANNEL_MAP,
     DecodedFrame,
     decode_frame,
+    decode_racepak_frame,
     extract_channel_index,
     extract_ecu_serial,
     is_hefi_broadcast,
+    is_racepak_header_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,10 +48,11 @@ class ChannelSnapshot:
 
 class CANListener:
     """
-    Async CAN bus listener that decodes HEFI broadcast frames.
+    Async CAN bus listener that decodes HEFI and Racepak broadcast frames.
 
     Features:
         - Auto-detects ECU serial from traffic
+        - Auto-detects Holley Standard (HEFI 29-bit float32) vs Racepak (int32BE/256) protocol
         - Maintains live state dict of all decoded channels
         - Per-channel ring buffers for recent history (configurable depth)
         - Subscriber pattern for real-time consumers (storage, alerts, dashboard)
@@ -60,12 +65,15 @@ class CANListener:
         bitrate: int = 1_000_000,
         history_depth: int = 600,  # ~10 minutes at 1 Hz
         receive_own_messages: bool = False,
+        protocol_mode: str = "auto",  # "auto", "hefi", or "racepak"
     ):
         self.interface = interface
         self.channel = channel
         self.bitrate = bitrate
         self.history_depth = history_depth
         self.receive_own_messages = receive_own_messages
+        self.protocol_mode = protocol_mode
+        self._detected_protocol: str = "hefi" if protocol_mode == "auto" else protocol_mode
 
         # Live state: channel_name → ChannelSnapshot
         self._live: dict[str, ChannelSnapshot] = {}
@@ -85,7 +93,7 @@ class CANListener:
         # Subscribers: async callbacks invoked for every decoded frame
         self._subscribers: list[Callable[[DecodedFrame], Coroutine]] = []
 
-        # CAN bus handle or Holley adapter
+        # CAN bus handle or Holley/Simulator adapter
         self._bus: Optional[can.Bus] = None
         self._holley_adapter: Any = None
         self._running = False
@@ -163,6 +171,7 @@ class CANListener:
         uptime = time.time() - self._start_time if self._start_time else 0
         return {
             "running": self._running,
+            "protocol_mode": self._detected_protocol,
             "uptime_s": round(uptime, 1),
             "frames_decoded": self._frame_count,
             "error_frames": self._error_count,
@@ -198,6 +207,14 @@ class CANListener:
                 err = self._holley_adapter.get_status().error_message or "Failed to connect to Holley USB cable"
                 logger.error("Failed to connect Holley adapter: %s", err)
                 raise RuntimeError(err)
+        elif self.interface in ("simulator", "virtual"):
+            from app.hardware.simulator import SimulationScenario, VirtualSimulatorAdapter
+            scenario_str = self.channel if self.channel in [s.value for s in SimulationScenario] else "multi_cycle"
+            self._holley_adapter = VirtualSimulatorAdapter(
+                scenario=SimulationScenario(scenario_str),
+                broadcast_hz=20.0,
+            )
+            await self._holley_adapter.connect()
         else:
             try:
                 self._bus = can.Bus(
@@ -243,6 +260,21 @@ class CANListener:
         self.bitrate = bitrate
         await self.start()
 
+    async def inject_decoded_frames(self, frames: list[DecodedFrame]) -> None:
+        """
+        Inject decoded frames (e.g. from an offline .dl/.dlz datalog) into live state,
+        history buffers, and subscribers.
+        """
+        for frame in frames:
+            self._frame_count += 1
+            self._discovered[frame.channel_index] += 1
+            self._update_live(frame)
+            for callback in self._subscribers:
+                try:
+                    await callback(frame)
+                except Exception as e:
+                    logger.error("Subscriber %s error: %s", callback.__qualname__, e)
+
     # ── Main loop ───────────────────────────────────────────────────────
 
     async def _listen_loop(self) -> None:
@@ -254,7 +286,6 @@ class CANListener:
                 if self._holley_adapter:
                     msg = await self._holley_adapter.receive(timeout=0.1)
                 elif self._bus:
-                    # Non-blocking receive with timeout, offloaded to thread pool
                     msg = await loop.run_in_executor(
                         None, lambda: self._bus.recv(timeout=0.1)
                     )
@@ -269,49 +300,53 @@ class CANListener:
                     self._error_count += 1
                     continue
 
-                # Only process extended (29-bit) frames
-                if not msg.is_extended_id:
+                if not msg.is_extended_id or len(msg.data) != 8:
                     continue
 
-                # Validate as HEFI broadcast
-                if not is_hefi_broadcast(msg.arbitration_id):
-                    continue
-
-                if len(msg.data) != 8:
-                    continue
-
-                # Decode
                 ts = msg.timestamp if msg.timestamp else time.time()
-                frame = decode_frame(msg.arbitration_id, bytes(msg.data), ts)
-                self._frame_count += 1
+                raw_bytes = bytes(msg.data)
 
-                # Auto-detect ECU serial from traffic
-                self._serial_votes[frame.ecu_serial_bits] += 1
-                if self._ecu_serial is None and self._frame_count >= 50:
-                    # Pick the most common serial after 50 frames
-                    self._ecu_serial = max(
-                        self._serial_votes, key=self._serial_votes.get
-                    )
-                    logger.info(
-                        "Auto-detected ECU serial bits: 0x%03X (%d)",
-                        self._ecu_serial, self._ecu_serial,
-                    )
+                # Auto-detect Racepak header frame (0x1E001000, channel_index == 0)
+                if is_racepak_header_id(msg.arbitration_id):
+                    if self.protocol_mode == "auto" and self._detected_protocol != "racepak":
+                        self._detected_protocol = "racepak"
+                        logger.info("Auto-detected Racepak CAN broadcast mode (0x1E001000)")
 
-                # Track discovery
-                self._discovered[frame.channel_index] += 1
+                decoded_list: list[DecodedFrame] = []
+                if self._detected_protocol == "racepak" or is_racepak_header_id(msg.arbitration_id):
+                    decoded_list = decode_racepak_frame(msg.arbitration_id, raw_bytes, ts)
+                elif is_hefi_broadcast(msg.arbitration_id):
+                    decoded_list = [decode_frame(msg.arbitration_id, raw_bytes, ts)]
 
-                # Update live state
-                self._update_live(frame)
+                for frame in decoded_list:
+                    self._frame_count += 1
 
-                # Notify subscribers
-                for callback in self._subscribers:
-                    try:
-                        await callback(frame)
-                    except Exception as e:
-                        logger.error(
-                            "Subscriber %s error: %s",
-                            callback.__qualname__, e,
+                    # Auto-detect ECU serial from traffic
+                    self._serial_votes[frame.ecu_serial_bits] += 1
+                    if self._ecu_serial is None and self._frame_count >= 50:
+                        self._ecu_serial = max(
+                            self._serial_votes, key=self._serial_votes.get
                         )
+                        logger.info(
+                            "Auto-detected ECU serial bits: 0x%03X (%d)",
+                            self._ecu_serial, self._ecu_serial,
+                        )
+
+                    # Track discovery
+                    self._discovered[frame.channel_index] += 1
+
+                    # Update live state
+                    self._update_live(frame)
+
+                    # Notify subscribers
+                    for callback in self._subscribers:
+                        try:
+                            await callback(frame)
+                        except Exception as e:
+                            logger.error(
+                                "Subscriber %s error: %s",
+                                callback.__qualname__, e,
+                            )
 
             except asyncio.CancelledError:
                 break

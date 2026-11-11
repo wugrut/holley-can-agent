@@ -366,42 +366,44 @@ class VirtualSimulatorAdapter(HardwareInterface):
 
         # 1: RPM
         add_frame(1, self.rpm, 0.0)
-        # 2: MAP / Baro
-        add_frame(2, self.map_kpa, self.baro_kpa)
-        # 3: TPS
-        add_frame(3, self.tps, 0.0)
-        # 4: Coolant Temp
-        add_frame(4, self.coolant_temp, 0.0)
+        # 2: Fuel Pulse Width / Duty Cycle (Official DBC Index 2 = FUEL_INJ_PW)
+        duty = (self.rpm * self.fuel_pw) / 1200.0
+        add_frame(2, self.fuel_pw, min(100.0, duty))
+        # 3: Injector Duty Cycle (Official DBC Index 3 = FUEL_DUTY_CYCLE)
+        add_frame(3, min(100.0, duty), 0.0)
         # 5: Target AFR
         add_frame(5, self.target_afr, 0.0)
         # 6: AFR Bank 1
         add_frame(6, self.afr_measured, 1.0)
         # 8: AFR Avg
         add_frame(8, self.afr_measured, 0.0)
-        # 11: Ignition Timing
-        add_frame(11, self.ignition_timing, 0.0)
-        # 12: Battery Voltage
-        add_frame(12, self.battery_voltage, 0.0)
         # 13: Fuel Learn
         add_frame(13, self.fuel_learn, 0.0)
         # 14: Closed Loop Flag (1.0 = active)
         add_frame(14, 1.0 if self.rpm > 400 else 0.0, 0.0)
-        # 15: IAT
-        add_frame(15, self.iat, 0.0)
-        # 16: Fuel Pulse Width / Duty Cycle
-        duty = (self.rpm * self.fuel_pw) / 1200.0
-        add_frame(16, self.fuel_pw, min(100.0, duty))
-        # 18: Target Idle
-        add_frame(18, 850.0, 25.0)
-        # 20: Transmission Gear
-        add_frame(20, float(self.trans_gear), float(self.trans_gear))
-        # 21: Trans Temp
-        add_frame(21, self.trans_temp, 0.0)
-        # 30: Oil Pressure
-        add_frame(30, self.oil_pressure, 0.0)
-        # 31: Fuel Pressure
-        add_frame(31, self.fuel_pressure, 0.0)
-        # 32: Vehicle Speed
-        add_frame(32, self.vehicle_speed, 0.0)
+        # 22: Ignition Timing (Official DBC Index 22 = SPARK_IGNITION_TIMING)
+        add_frame(22, self.ignition_timing, 0.0)
+        # 27: Target Idle (Official DBC Index 27 = IDLE_TARGET_IDLE_SPEED)
+        add_frame(27, 850.0, 25.0)
+        # 28: MAP / Baro (Official DBC Index 28 = SENSOR_MAP)
+        add_frame(28, self.map_kpa, self.baro_kpa)
+        # 29: TPS (Official DBC Index 29 = SENSOR_TPS)
+        add_frame(29, self.tps, 0.0)
+        # 30: IAT (Official DBC Index 30 = SENSOR_MAT)
+        add_frame(30, self.iat, 0.0)
+        # 31: Coolant Temp (Official DBC Index 31 = SENSOR_CTS)
+        add_frame(31, self.coolant_temp, 0.0)
+        # 33: Battery Voltage (Official DBC Index 33 = SENSOR_BATT_VOLT)
+        add_frame(33, self.battery_voltage, 0.0)
+        # 34: Oil Pressure (Official DBC Index 34 = SENSOR_OIL_PRESSURE)
+        add_frame(34, self.oil_pressure, 0.0)
+        # 35: Fuel Pressure (Official DBC Index 35 = SENSOR_FUEL_PRESSURE)
+        add_frame(35, self.fuel_pressure, 0.0)
+        # 219: Transmission Gear (Official DBC Index 219 = TRANS_GEAR)
+        add_frame(219, float(self.trans_gear), float(self.trans_gear))
+        # 220: Vehicle Speed (Official DBC Index 220 = TRANS_SPEED)
+        add_frame(220, self.vehicle_speed, 0.0)
+        # 225: Trans Temp (Official DBC Index 225 = TRANS_LINE_TEMP)
+        add_frame(225, self.trans_temp, 0.0)
 
         return frames

@@ -29,6 +29,7 @@ from .copilot_service import CopilotService
 from .listener import CANListener
 from .protocol import DecodedFrame
 from .storage import TimeSeriesStorage
+from .tune_optimizer import AutoHandoffWatcher, PostPullDetector, VETableOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,40 @@ def create_app(
     alert_engine: Optional[AlertEngine] = None,
     cors_origins: list[str] | None = None,
 ) -> FastAPI:
+    ve_optimizer = VETableOptimizer(base_fuel_psi=58.0)
+    pull_detector = PostPullDetector(base_fuel_psi=58.0)
+    handoff_watcher = AutoHandoffWatcher(
+        listener=listener,
+        ve_optimizer=ve_optimizer,
+        pull_detector=pull_detector,
+    )
+    _last_opt_sample_ts = 0.0
+
+    async def _on_optimizer_frame(frame: DecodedFrame) -> None:
+        nonlocal _last_opt_sample_ts
+        now = time.time()
+        # Sample into VE optimizer and Post-Pull detector at ~10 Hz when RPM arrives
+        if frame.name == "rpm" and (now - _last_opt_sample_ts) >= 0.1:
+            _last_opt_sample_ts = now
+            snap_raw = listener.get_live_snapshot()
+            flat = {k: float(v.get("value", 0.0)) for k, v in snap_raw.items() if isinstance(v, dict)}
+            if flat.get("rpm", 0.0) > 400.0:
+                ve_optimizer.last_source = f"Live ({listener.interface})"
+                ve_optimizer.ingest_row(flat)
+                scorecard = pull_detector.on_snapshot(flat)
+                if scorecard:
+                    broadcaster._pending_alerts.append({
+                        "severity": scorecard["severity"],
+                        "alert_type": "post_pull_scorecard",
+                        "channel": "rpm",
+                        "message": f"🏁 {scorecard['verdict']}",
+                        "value": scorecard["peak_rpm"],
+                        "threshold": 0.0,
+                        "timestamp": scorecard["timestamp"],
+                    })
+
+    listener.subscribe(_on_optimizer_frame)
+
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI):
         await storage.initialize()
@@ -133,9 +168,11 @@ def create_app(
                 await listener.start()
             except Exception as e:
                 logger.warning(
-                    "Could not auto-start CAN listener on boot: %s. Use /api/hardware/reconnect once hardware is connected.", e
+                    "Could not auto-start CAN listener on boot: %s. Auto-Handoff Watcher active.", e
                 )
+        await handoff_watcher.start()
         yield
+        await handoff_watcher.stop()
         if getattr(listener, "_running", False):
             try:
                 await listener.stop()
@@ -266,12 +303,19 @@ def create_app(
     @app.get("/api/hardware/status")
     async def get_hardware_status():
         """Returns live hardware transceiver state, error frames, and discovery status."""
+        lock_info = {"locked": False, "processes": []}
+        try:
+            from app.hardware.detection import check_holley_software_lock
+            lock_info = check_holley_software_lock()
+        except Exception:
+            pass
         return {
             "interface": getattr(listener, "interface", "unknown"),
             "channel": getattr(listener, "channel", "unknown"),
             "bitrate": getattr(listener, "bitrate", 1_000_000),
             "is_running": getattr(listener, "_running", False),
             "ecu_serial": listener.ecu_serial,
+            "winusb_lock": lock_info,
             "stats": listener.stats,
         }
 
@@ -332,8 +376,97 @@ def create_app(
             }
         except Exception as e:
             err_msg = str(e)
+            try:
+                from app.hardware.detection import check_holley_software_lock
+                lock_info = check_holley_software_lock()
+                if lock_info["locked"]:
+                    err_msg = f"{err_msg} — {lock_info['hint']}"
+            except Exception:
+                pass
             logger.error("Hardware reconnect error: %s", err_msg)
             return {"status": "error", "message": err_msg}
+
+    # ── Offline .DL / .DLZ Binary Datalog Discovery & Analysis API ──────
+
+    @app.get("/api/datalogs/discover")
+    async def discover_datalogs():
+        """Scans Documents/Holley for local .dl, .dlz, and .terx files."""
+        from .dl_parser import discover_local_holley_files
+        return discover_local_holley_files()
+
+    @app.post("/api/datalogs/analyze")
+    async def analyze_datalog_endpoint(payload: Optional[dict] = None):
+        """
+        Parses a Holley .dl or .dlz binary datalog, returns min/max/avg + WOT summary,
+        and optionally injects its peak-RPM telemetry snapshot into the live dashboard.
+        """
+        from .dl_parser import HolleyDatalogParser, discover_local_holley_files
+
+        file_path = (payload or {}).get("path")
+        inject_to_live = (payload or {}).get("inject_to_live", True)
+        row_index = int((payload or {}).get("row_index", -1))
+
+        if not file_path:
+            found = discover_local_holley_files()
+            if not found["datalogs"]:
+                return {"status": "error", "message": "No .dl or .dlz files found on disk."}
+            file_path = found["datalogs"][0]["path"]
+
+        try:
+            parser = HolleyDatalogParser(file_path)
+            summary = parser.summarize()
+            ve_optimizer.ingest_datalog(file_path)
+            if inject_to_live and hasattr(listener, "inject_decoded_frames"):
+                frames = parser.to_decoded_frames(row_index=row_index)
+                await listener.inject_decoded_frames(frames)
+                summary["injected_channels"] = len(frames)
+            return {"status": "success", "summary": summary}
+        except Exception as e:
+            logger.error("Datalog analysis failed for %s: %s", file_path, e)
+            return {"status": "error", "message": str(e)}
+
+    # ── AI Tune Optimizer (16x16 VE Matrix + Ctrl+V TSV + Post-Pull) ────
+
+    @app.get("/api/optimizer/matrix")
+    async def get_optimizer_matrix():
+        """Returns the 16x16 VE Hit & Correction Matrix, Holley TSV clipboard string, and Post-Pull scorecards."""
+        payload = ve_optimizer.get_matrix_payload()
+        payload["handoff_mode"] = handoff_watcher.handoff_mode
+        payload["last_auto_ingested_log"] = handoff_watcher.last_auto_ingested_log
+        payload["scorecards"] = pull_detector.recent_scorecards
+        return payload
+
+    @app.post("/api/optimizer/ingest_datalog")
+    async def optimizer_ingest_datalog(payload: Optional[dict] = None):
+        """Loads a .dl or .dlz datalog (or latest log in Documents/Holley) into the 16x16 VE Optimizer."""
+        from .dl_parser import discover_local_holley_files
+
+        file_path = (payload or {}).get("path")
+        if not file_path:
+            found = discover_local_holley_files()
+            if not found["datalogs"]:
+                return {"status": "error", "message": "No .dl or .dlz datalog files found in Documents/Holley."}
+            file_path = found["datalogs"][0]["path"]
+
+        try:
+            handoff_watcher._ingest_file(file_path)
+            parser = HolleyDatalogParser(file_path)
+            if hasattr(listener, "inject_decoded_frames"):
+                await listener.inject_decoded_frames(parser.to_decoded_frames())
+            matrix = ve_optimizer.get_matrix_payload()
+            matrix["handoff_mode"] = handoff_watcher.handoff_mode
+            matrix["scorecards"] = pull_detector.recent_scorecards
+            return {"status": "success", "matrix": matrix}
+        except Exception as e:
+            logger.error("Optimizer datalog ingest error: %s", e)
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/optimizer/reset")
+    async def optimizer_reset():
+        """Resets the 16x16 VE accumulator cells for a fresh tuning pass."""
+        ve_optimizer.reset()
+        pull_detector.recent_scorecards.clear()
+        return {"status": "success", "matrix": ve_optimizer.get_matrix_payload()}
 
     # ── Run Logger API ──────────────────────────────────────────────────
 

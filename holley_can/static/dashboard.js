@@ -2273,3 +2273,141 @@ function openGaugeSettings(index) {
     
     modal.classList.remove('hidden');
 }
+
+// ─── AI Tune Optimizer (16x16 VE Matrix + 1-Click Ctrl+V Clipboard) ─────────
+
+let lastOptimizerMatrix = null;
+
+async function refreshOptimizerModal() {
+    const statusEl = document.getElementById('opt-copy-status');
+    try {
+        const res = await fetch('/api/optimizer/matrix');
+        const data = await res.json();
+        lastOptimizerMatrix = data;
+        renderOptimizerMatrix(data);
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Error loading optimizer matrix';
+    }
+}
+
+function renderOptimizerMatrix(data) {
+    const badge = document.getElementById('opt-handoff-badge');
+    if (badge) {
+        badge.textContent = `${data.source || 'Live'} • ${data.total_samples || 0} samples (${data.cells_touched || 0} cells hit)`;
+    }
+
+    const scText = document.getElementById('opt-scorecard-text');
+    if (scText) {
+        if (data.scorecards && data.scorecards.length > 0) {
+            const sc = data.scorecards[0];
+            scText.textContent = `${sc.verdict} [Peak: ${sc.peak_rpm} RPM | MAP: ${sc.peak_map_kpa} kPa (+${sc.peak_boost_psig} psig) | WOT AFR: ${sc.avg_afr} (Tgt ${sc.target_afr}) | Min FP: ${sc.min_fuel_pressure_psi} psi]`;
+        } else {
+            scText.textContent = `Source: ${data.source} — ${data.cells_needing_change || 0} cells need >1.5% VE adjustment (${data.fp_warning_cells || 0} fuel pressure warnings).`;
+        }
+    }
+
+    const thead = document.getElementById('opt-ve-thead');
+    const tbody = document.getElementById('opt-ve-tbody');
+    if (!thead || !tbody || !data.rpm_axis || !data.rows) return;
+
+    let headHtml = '<tr><th style="padding:5px 6px; border-bottom:1px solid rgba(255,255,255,0.15); color:#00e5ff;">kPa \\ RPM</th>';
+    for (const rpm of data.rpm_axis) {
+        headHtml += `<th style="padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.15); color:#94a3b8;">${rpm}</th>`;
+    }
+    headHtml += '</tr>';
+    thead.innerHTML = headHtml;
+
+    let bodyHtml = '';
+    for (const row of data.rows) {
+        const boostLabel = row.boost_psig > 0 ? ` (+${row.boost_psig}p)` : '';
+        bodyHtml += `<tr><td style="padding:4px 6px; font-weight:700; background:#0d1526; color:#00e5ff; border-bottom:1px solid rgba(255,255,255,0.06); white-space:nowrap;">${row.map_kpa}${boostLabel}</td>`;
+        for (const cell of row.cells) {
+            let bg = 'transparent';
+            let fg = '#64748b';
+            let sub = '';
+            if (cell.hits > 0) {
+                fg = '#f8fafc';
+                const c = cell.correction_pct || 0;
+                if (cell.fp_warning) {
+                    bg = 'rgba(255, 23, 68, 0.38)';
+                } else if (c <= -3.0) {
+                    bg = 'rgba(0, 176, 255, 0.28)'; // Pulling fuel (was rich)
+                } else if (c >= 3.0) {
+                    bg = 'rgba(255, 145, 0, 0.30)'; // Adding fuel (was lean)
+                } else {
+                    bg = 'rgba(0, 230, 118, 0.18)'; // Dialed in within ±3%
+                }
+                sub = `<div style="font-size:9px; opacity:0.85;">${c > 0 ? '+' : ''}${c}%</div>`;
+            }
+            bodyHtml += `<td title="RPM: ${cell.rpm} | MAP: ${cell.map_kpa} kPa | Hits: ${cell.hits} | Base VE: ${cell.base_ve}% -> New VE: ${cell.recommended_ve}% (${cell.correction_pct}%)" style="padding:3px 2px; background:${bg}; color:${fg}; border:1px solid rgba(255,255,255,0.05);">
+                <div style="font-weight:600;">${cell.recommended_ve.toFixed(1)}</div>${sub}
+            </td>`;
+        }
+        bodyHtml += '</tr>';
+    }
+    tbody.innerHTML = bodyHtml;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const optBtn = document.getElementById('btn-optimizer-toggle');
+    const optModal = document.getElementById('optimizer-modal');
+    const optClose = document.getElementById('optimizer-modal-close');
+    const copyVeBtn = document.getElementById('btn-opt-copy-ve');
+    const copyCorrBtn = document.getElementById('btn-opt-copy-corr');
+    const loadDlBtn = document.getElementById('btn-opt-load-dl');
+    const resetBtn = document.getElementById('btn-opt-reset');
+    const statusEl = document.getElementById('opt-copy-status');
+
+    if (optBtn && optModal) {
+        optBtn.addEventListener('click', () => {
+            optModal.classList.remove('hidden');
+            refreshOptimizerModal();
+        });
+    }
+    if (optClose && optModal) {
+        optClose.addEventListener('click', () => optModal.classList.add('hidden'));
+    }
+    if (copyVeBtn) {
+        copyVeBtn.addEventListener('click', async () => {
+            if (!lastOptimizerMatrix) await refreshOptimizerModal();
+            if (lastOptimizerMatrix && lastOptimizerMatrix.holley_tsv_ve) {
+                await navigator.clipboard.writeText(lastOptimizerMatrix.holley_tsv_ve);
+                if (statusEl) statusEl.textContent = '✓ Copied 16×16 VE Table! Switch to Terminator X.exe and press Ctrl+V.';
+            }
+        });
+    }
+    if (copyCorrBtn) {
+        copyCorrBtn.addEventListener('click', async () => {
+            if (!lastOptimizerMatrix) await refreshOptimizerModal();
+            if (lastOptimizerMatrix && lastOptimizerMatrix.holley_tsv_correction_pct) {
+                await navigator.clipboard.writeText(lastOptimizerMatrix.holley_tsv_correction_pct);
+                if (statusEl) statusEl.textContent = '✓ Copied 16×16 % Trim Corrections to Clipboard!';
+            }
+        });
+    }
+    if (loadDlBtn) {
+        loadDlBtn.addEventListener('click', async () => {
+            if (statusEl) statusEl.textContent = 'Loading latest .dl/.dlz datalog from Documents/Holley...';
+            const res = await fetch('/api/optimizer/ingest_datalog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const out = await res.json();
+            if (out.status === 'success' && out.matrix) {
+                lastOptimizerMatrix = out.matrix;
+                renderOptimizerMatrix(out.matrix);
+                if (statusEl) statusEl.textContent = `✓ Loaded ${out.matrix.source} (${out.matrix.total_samples} rows)!`;
+            } else if (statusEl) {
+                statusEl.textContent = out.message || 'No datalog found';
+            }
+        });
+    }
+    if (resetBtn) {
+        resetBtn.addEventListener('click', async () => {
+            const res = await fetch('/api/optimizer/reset', { method: 'POST' });
+            const out = await res.json();
+            if (out.matrix) {
+                lastOptimizerMatrix = out.matrix;
+                renderOptimizerMatrix(out.matrix);
+                if (statusEl) statusEl.textContent = '✓ Optimizer matrix reset for fresh tuning pass.';
+            }
+        });
+    }
+});

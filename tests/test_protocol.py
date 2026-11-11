@@ -16,9 +16,11 @@ from holley_can.protocol import (
     ChannelCategory,
     decode_frame,
     decode_payload,
+    decode_racepak_frame,
     extract_channel_index,
     extract_ecu_serial,
     is_hefi_broadcast,
+    is_racepak_header_id,
 )
 
 
@@ -156,7 +158,8 @@ class TestFrameDecoding:
         assert frame.ecu_serial_bits == 0x1A5
 
     def test_decode_map_frame(self):
-        can_id = make_hefi_can_id(channel_index=2, ecu_serial=0x0FF)
+        # Official Holley DBC: SENSOR_MAP is channel index 28 (0x1E071000)
+        can_id = make_hefi_can_id(channel_index=28, ecu_serial=0x0FF)
         data = make_payload(101.325, 101.0)
         ts = time.time()
 
@@ -180,7 +183,8 @@ class TestFrameDecoding:
         assert frame.unit == ""
 
     def test_decode_timing_frame(self):
-        can_id = make_hefi_can_id(channel_index=11, ecu_serial=0x1A5)
+        # Official Holley DBC: SPARK_IGNITION_TIMING is channel index 22 (0x1E059000)
+        can_id = make_hefi_can_id(channel_index=22, ecu_serial=0x1A5)
         data = make_payload(28.5, 0.0)
         ts = time.time()
 
@@ -190,7 +194,8 @@ class TestFrameDecoding:
         assert abs(frame.value_a - 28.5) < 0.01
 
     def test_decode_gear_frame(self):
-        can_id = make_hefi_can_id(channel_index=20, ecu_serial=0x1A5)
+        # Official Holley DBC: TRANS_GEAR is channel index 219 (0x1E36D000)
+        can_id = make_hefi_can_id(channel_index=219, ecu_serial=0x1A5)
         data = make_payload(3.0, 0.0)
         ts = time.time()
 
@@ -199,6 +204,29 @@ class TestFrameDecoding:
         assert frame.name == "trans_gear"
         assert frame.channel_def.category == ChannelCategory.TRANSMISSION
         assert abs(frame.value_a - 3.0) < 0.01
+
+    def test_decode_racepak_frames(self):
+        """Verify Racepak int32BE / 256 dual-channel decoding (ported from AutoDashBackEnd)."""
+        ts = time.time()
+        # 1. Racepak header 0x1E001000: RTC=5000ms, RPM=3200 * 256
+        rpm_id = 0x1E001000 | 0x1A5
+        assert is_racepak_header_id(rpm_id) is True
+        rpm_payload = struct.pack(">ii", 5000, int(3200 * 256))
+        rpm_frames = decode_racepak_frame(rpm_id, rpm_payload, ts)
+        assert len(rpm_frames) == 1
+        assert rpm_frames[0].name == "rpm"
+        assert rpm_frames[0].protocol == "racepak"
+        assert abs(rpm_frames[0].value_a - 3200.0) < 0.01
+
+        # 2. Racepak 0x1E029000: Pedal Position (100%) + Fuel Pressure (58.0 psi)
+        fp_id = 0x1E029000 | 0x1A5
+        fp_payload = struct.pack(">ii", int(100.0 * 256), int(58.0 * 256))
+        fp_frames = decode_racepak_frame(fp_id, fp_payload, ts)
+        assert len(fp_frames) == 2
+        assert fp_frames[0].name == "pedal_position"
+        assert abs(fp_frames[0].value_a - 100.0) < 0.01
+        assert fp_frames[1].name == "fuel_pressure"
+        assert abs(fp_frames[1].value_a - 58.0) < 0.01
 
 
 # ─── Channel Map Tests ──────────────────────────────────────────────────────

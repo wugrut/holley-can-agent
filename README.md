@@ -4,10 +4,37 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CAN Bus: 1 Mbps](https://img.shields.io/badge/CAN-1_Mbps_Broadcast-orange.svg)]()
 [![Platform: Windows | Linux](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg)]()
-[![Tests: 78 Passing](https://img.shields.io/badge/Tests-78%2F78_Passing-brightgreen.svg)]()
+[![Tests: 109 Passing](https://img.shields.io/badge/Tests-109%2F109_Passing-brightgreen.svg)]()
 
-> **An intelligence and decision-support layer operating alongside Holley EFI systems.**  
-> *Holley provides engine control and telemetry; EFI Intelligence Copilot explains what the data means, detects anomalies, establishes vehicle baselines, and recommends evidence-backed next steps.*
+> **An agentic telemetry, diagnostics, and 16×16 VE calibration studio operating alongside Holley Terminator X / X MAX EFI systems.**  
+> *Built and calibrated for the **1980 Ford Fairmont 4-Door "Boxtop" Turbo 4.8L LS + GM 4L80E** platform.*
+
+---
+
+## ⚡ BLUF (Bottom Line Up Front) — 3-Step Workflow
+
+1. **Launch Studio**: Double-click **`0_START_HOLLEY_STUDIO.bat`** (opens `http://127.0.0.1:8420`).
+   - When **`Terminator X.exe` is CLOSED**: Streams **1 Mbps Live CAN** (auto-detecting both **Holley Standard HEFI** and **Racepak** broadcast frames).
+   - When **`Terminator X.exe` is OPEN**: Automatically yields the USB cable and watches `Documents\Holley\Terminator X V3\Data Logs\`, parsing any new `.dl` or `.dlz` datalog within 2 seconds of saving.
+2. **Drive or Make a Pull**:
+   - In Live Mode, lifting off the throttle after a WOT pull (`TPS >= 75%`) automatically triggers the **Post-Pull Co-Driver Scorecard** and spoken voice summary (Peak RPM, Boost PSI, WOT AFR error, `58 PSI + 1:1` fuel pressure check, Knock Retard, and **4L80E Yank 3600 converter slip %**).
+   - In Holley App Mode, saving a `.dl` log automatically ingests and scores the pull.
+3. **1-Click Copy & `Ctrl+V` Paste into Holley**:
+   - Click **`🎯 TUNE OPTIMIZER`** → **`📋 COPY 16×16 VE TABLE (CTRL+V)`**.
+   - In **`Terminator X.exe`** (**Fuel ICF → Base Fuel Table**), click the top-left cell (`260 kPa` / `500 RPM`), press **`Ctrl+V`**, and click **Send to ECU**.
+
+---
+
+## 🏎️ Target Platform: 1980 Ford Fairmont "Boxtop" Turbo LS + 4L80E
+
+| Subsystem | Hardware & Calibration Specification |
+|:---|:---|
+| **Chassis & Rear End** | 1980 Ford Fairmont 4-Door (~3,300 lbs), Ford 8.8" (`3.73:1`), `245/45R17` Drag Radials (`25.85"` dia), Viking Berzerker 2-way coilovers |
+| **Engine & Cam** | GM 4.8L Gen III LS (`LM7`/`LR4`), Elgin E-1840-P "Sloppy Stage 2" (`228°/230° @ .050"`, `.585"/.585"`, `112° LSA`), PAC 1218 springs |
+| **Forced Induction** | VS Racing 78/75 Billet/Cast Turbo on Hooker BlackHeart manifold, 3" Cold Side FMIC, Pre-TB BOV, 3" electric cutout, NGK BR7EF @ `0.022"` |
+| **Fueling & Limits** | Racetronix 420 LPH pump (`58 PSI` base + `1:1` boost-ref), Siemens Deka `80 lb/hr` injectors, Flex Fuel (`E85`/`93`/`E40`), `12–15 PSI` standard boost, **`> 17.0 PSI` pump/blend safety cut**, **`20.0 PSI` max E85 boost**, **`6800 RPM` rev limit** |
+| **Transmission & Staging** | GM 4L80E (Alto Red Eagle, TransGo HD2), **Yank 3600 RPM stall converter**, **3rd-Gear "Sloppy Transbrake"** mechanical bind-up staging (`3000–3200 RPM` @ `0°–5° BTDC`) |
+| **Fairmont VE Optimizer** | 16×16 RPM (`500..7000`) × MAP (`20..260 kPa`) grid; filters `CLT < 160°F`, DFCO, transients (`\|dTPS/dt\| > 25%/s`, `\|dMAP/dt\| > 65 kPa/s`), and Sloppy Transbrake staging; shifts wideband O2 by **`100–150 ms`** for exhaust velocity; computes $\text{New\_VE} = \text{Current\_VE} \times (1 + \text{CL\_Comp\_Percent}/100)$ targeting **`±2.0%`** steady-state error |
 
 ---
 
@@ -82,6 +109,7 @@ For tuning laptops running Windows 10/11 without Python installed:
 
 | Launcher Script | Purpose |
 |:---|:---|
+| `0_START_HOLLEY_STUDIO.bat` | ⭐ **UNIFIED STUDIO LAUNCHER:** Starts the web dashboard (`http://127.0.0.1:8420`) with Auto-Handoff (1 Mbps Live CAN + `.dl`/`.dlz` Datalog Watcher + 16×16 VE Optimizer). |
 | `1_RUN_SIMULATOR_DEMO.bat` | Tests the app indoors without connecting to the car (generates sample report). |
 | `2_RUN_LIVE_HOLLEY_USB.bat` | ⭐ **PREFERRED:** Connects natively to official Holley USB-to-CAN Cable (Part 558-443) via WinUSB at 1 Mbps. |
 | `2_RUN_LIVE_HOLLEY_CABLE.bat` | Convenience alias for official Holley USB-CAN cable. |
@@ -230,6 +258,20 @@ holley-can-agent/
 ├── requirements.txt              # Python package dependencies
 └── tests/                        # 78 comprehensive pytest test fixtures
 ```
+
+---
+
+## 🙏 Credits, Acknowledgments & Referenced Open-Source Projects
+
+This project stands on the shoulders of outstanding reverse-engineering and open-source work from the Holley EFI community. Special thanks and full credit go to:
+
+1. **[`HackingLZ/holley-efi-parser`](https://github.com/HackingLZ/holley-efi-parser)** by **[HackingLZ](https://github.com/HackingLZ)** *(forked at [`wugrut/holley-efi-parser`](https://github.com/wugrut/holley-efi-parser))*
+   - **Official Holley CAN DBC Definitions**: Provided the canonical `HP Dominator & Terminator X DBC.dbc` and `HARDWIRE HOLLEY DBC FILE.dbc` files used to verify exact 29-bit HEFI broadcast channel indices (`SENSOR_MAP` Ch 28, `SENSOR_TPS` Ch 29, `FUEL_MAP_ROC` Ch 18, `FUEL_TPS_ROC` Ch 19, `SYSTEM_BASE_FUEL_VE` Ch 52, `TRANS_GEAR` Ch 219, etc.).
+   - **Binary `.DL` / `.DLZ` Datalog Reverse Engineering**: Pioneered the `.dlz` RLE + 4-byte endian swap decompression algorithm (`dlz.py`) and `.dl` binary floating-point slot structure (`dl.py`) adapted into [`holley_can/dl_parser.py`](holley_can/dl_parser.py).
+
+2. **[`Mathews2115/AutoDashBackEnd`](https://github.com/Mathews2115/AutoDashBackEnd)** & **[`Mathews2115/AutoDashFrontEndBoilerPlate`](https://github.com/Mathews2115/AutoDashFrontEndBoilerPlate)** by **[Mathews2115](https://github.com/Mathews2115)** *(forked at [`wugrut/AutoDashBackEnd`](https://github.com/wugrut/AutoDashBackEnd) & [`wugrut/AutoDashFrontEndBoilerPlate`](https://github.com/wugrut/AutoDashFrontEndBoilerPlate))*
+   - **Holley CAN Bus 2 Racepak Decoder**: Provided the `src/CAN/racepakDecoder.js` specification (`0x1E001000..0x1E049000` dual big-endian signed 32-bit integers scaled by `1/256.0`), ported into [`holley_can/protocol.py`](holley_can/protocol.py) (`RACEPAK_CAN_MAP` and `decode_racepak_frame`) for seamless dual-protocol (`HEFI` + `Racepak`) auto-detection.
+   - **Digital Dash Telemetry Architecture**: Inspired the real-time WebSocket digital dash and high-contrast track HUD design.
 
 ---
 

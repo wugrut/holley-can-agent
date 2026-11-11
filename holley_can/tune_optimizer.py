@@ -1,0 +1,850 @@
+"""
+tune_optimizer.py — Fairmont VE Optimizer, 4L80E Drivetrain/Staging Auditor & Auto-Handoff Engine
+
+Target Platform: 1980 Ford Fairmont 4-Door "Boxtop" (Fox Platform, ~3,300 lbs)
+Engine:          GM 4.8L Iron-Block Gen III LS (LM7/LR4), Elgin E-1840-P "Sloppy Stage 2" Cam
+                 (228°/230° @ .050", .585"/.585" lift, 112° LSA), PAC 1218 springs
+Induction:       VS Racing 78/75 Turbo on Hooker BlackHeart manifold, 3" Cold Side FMIC,
+                 Pre-TB BOV, 3" exhaust w/ 3" electric cutout, NGK BR7EF @ 0.022"
+Fueling:         Racetronix 420 LPH pump, 58 PSI base mechanical rail pressure (1:1 boost-ref),
+                 Siemens Deka 80 lb/hr High-Z injectors, Flex Fuel sensor (E85 / 93 / E40)
+Transmission:    GM 4L80E (Alto Red Eagle / TransGo HD2), Yank 3600 RPM stall converter,
+                 3rd-gear mechanical bind-up "Sloppy Transbrake" staging (3000–3200 RPM @ 0°–5° BTDC),
+                 Ford 8.8" rear axle w/ 3.73:1 gears, 245/45R17 drag radials (~25.85" rolling dia)
+ECU & Bus:       Holley Terminator X Max EFI @ 1 Mbps CAN (can0 SocketCAN / Holley USB-CAN / PCAN / SLCAN)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import math
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional
+
+from .dl_parser import HolleyDatalogParser, discover_local_holley_files
+
+logger = logging.getLogger(__name__)
+
+# ─── 1980 Ford Fairmont Turbo LS Platform Specification ─────────────────────
+
+FAIRMONT_PLATFORM_SPEC: Dict[str, Any] = {
+    "vehicle": "1980 Ford Fairmont 4-Door 'Boxtop' (Fox Platform)",
+    "curb_weight_lbs": 3300,
+    "rear_axle": "Ford 8.8-inch SN95 (3.73:1 ring & pinion)",
+    "final_drive_ratio": 3.73,
+    "tire_size": "245/45R17 Drag Radials",
+    "tire_diameter_in": 25.85,
+    "engine": "GM 4.8L Gen III LS (LM7/LR4)",
+    "camshaft": "Elgin E-1840-P Sloppy Stage 2 (228/230 @ .050, .585/.585, 112 LSA) + PAC 1218",
+    "turbo": "VS Racing 78/75 on Hooker BlackHeart Manifold + 3in FMIC",
+    "ignition": "Stock LS CNP + NGK BR7EF @ 0.022in",
+    "fuel_system": "Racetronix 420 LPH + 58 PSI Base (1:1 Boost-Ref) + Siemens Deka 80 lb/hr + Flex Fuel",
+    "transmission": "GM 4L80E (Alto Red Eagle, TransGo HD2) + Yank 3600 RPM Stall",
+    "gear_ratios_4l80e": {1: 2.48, 2: 1.48, 3: 1.00, 4: 0.75},
+    "staging_strategy": "3rd-Gear Mechanical Bind-Up 'Sloppy Transbrake' (3000-3200 RPM, 0-5 deg BTDC)",
+    "limits": {
+        "base_fuel_psi": 58.0,
+        "standard_boost_min_psi": 12.0,
+        "standard_boost_max_psi": 15.0,
+        "pump_blend_boost_cut_psi": 17.0,   # > 17.0 PSI hard safety threshold on lower ethanol blends
+        "max_e85_boost_psi": 20.0,          # 20.0 PSI strictly on high-percentage E85
+        "max_rpm": 6800.0,
+        "min_coolant_f": 160.0,             # Coolant temp > 160°F required for steady-state VE learning
+        "steady_state_trim_target_pct": 2.0,
+        "d_tps_threshold_pct_s": 25.0,      # Filter |dTPS/dt| > 25 %/sec
+        "d_map_threshold_kpa_s": 65.0,      # Filter |dMAP/dt| > 65 kPa/sec
+        "wb_lag_min_ms": 100.0,             # High exhaust velocity wideband O2 transport delay
+        "wb_lag_max_ms": 150.0,             # Low exhaust velocity wideband O2 transport delay
+    },
+}
+
+# Standard 16x16 3-Bar Turbo LS Breakpoints (500 to 7000 RPM vs 20 to 260 kPa MAP)
+RPM_AXIS: List[int] = [
+    500, 800, 1200, 1600, 2000, 2400, 2800, 3200,
+    3600, 4000, 4500, 5000, 5500, 6000, 6500, 7000,
+]
+
+MAP_AXIS: List[int] = [
+    20, 30, 40, 50, 60, 70, 80, 90,
+    100, 115, 130, 150, 175, 200, 230, 260,
+]
+
+
+def _nearest_index(axis: List[int], val: float) -> int:
+    best_i = 0
+    best_dist = abs(val - axis[0])
+    for i in range(1, len(axis)):
+        d = abs(val - axis[i])
+        if d < best_dist:
+            best_dist = d
+            best_i = i
+    return best_i
+
+
+def estimate_wideband_transport_delay_s(rpm: float, map_kpa: float) -> float:
+    """
+    Computes wideband O2 sensor exhaust transport delay (100ms to 150ms) as a function
+    of exhaust gas velocity proxy (RPM * MAP_kPa) through the Hooker BlackHeart manifold
+    and VS Racing 78/75 turbine housing.
+      - Idle / low-flow cruise (~800 RPM * 45 kPa = 36,000): ~0.150 s (150 ms)
+      - High-RPM WOT boost (~6000 RPM * 215 kPa = 1,290,000): ~0.100 s (100 ms)
+    """
+    flow_proxy = max(0.0, rpm * map_kpa)
+    norm = max(0.0, min(1.0, (flow_proxy - 40_000.0) / 1_200_000.0))
+    return round(0.150 - (0.050 * norm), 4)
+
+
+def is_sloppy_transbrake_staging(row: Dict[str, float]) -> bool:
+    """
+    Detects when the Fairmont 4L80E is engaged in the 3rd-gear mechanical bind-up
+    "Sloppy Transbrake" staging strategy (3000-3200 RPM on the 2-step limiter with
+    2D ignition timing retard to 0°-5° BTDC and vehicle stationary).
+    """
+    if (
+        row.get("trans_brake_status", 0.0) > 0.5
+        or row.get("launch_status", 0.0) > 0.5
+        or row.get("rev_limit_1", 0.0) > 0.5
+        or row.get("staging_input_1", 0.0) > 0.5
+    ):
+        return True
+
+    gear = int(round(row.get("trans_gear", 0.0)))
+    speed = row.get("vehicle_speed", 0.0)
+    rpm = row.get("rpm", 0.0)
+    timing = row.get("ignition_timing", 20.0)
+    tps = row.get("tps", 0.0)
+
+    # 3rd-gear bind-up hold @ 2700-3500 RPM, stationary (< 3 mph), high throttle or 0-6° timing retard
+    if speed < 3.0 and 2700.0 <= rpm <= 3550.0:
+        if gear == 3 and (tps >= 40.0 or timing <= 7.0):
+            return True
+        if tps >= 65.0 and -5.0 <= timing <= 6.5:
+            return True
+    return False
+
+
+def compute_4l80e_converter_metrics(row: Dict[str, float]) -> Dict[str, Any]:
+    """
+    Evaluates GM 4L80E gear state, TCC lockup bit, and Yank 3600 RPM converter slip %
+    using the Fairmont's 3.73:1 Ford 8.8" rear end and 25.85" (245/45R17) drag radials.
+    """
+    gear = int(round(row.get("trans_gear", 0.0)))
+    rpm = row.get("rpm", 0.0)
+    mph = row.get("vehicle_speed", 0.0)
+    input_rpm = row.get("input_speed", 0.0)
+    tcc_dc = row.get("tcc_status", 0.0)
+    lockup_bit = row.get("lockup_status", 0.0) > 0.5 or tcc_dc >= 85.0
+
+    gear_ratios = FAIRMONT_PLATFORM_SPEC["gear_ratios_4l80e"]
+    gear_ratio = gear_ratios.get(gear, 1.00)
+    final_drive = FAIRMONT_PLATFORM_SPEC["final_drive_ratio"]     # 3.73
+    tire_dia = FAIRMONT_PLATFORM_SPEC["tire_diameter_in"]         # 25.85"
+
+    # Calculate theoretical turbine/driveshaft RPM if input_speed sensor is not populated
+    if input_rpm > 100.0:
+        turbine_rpm = input_rpm
+    elif mph > 3.0 and gear in gear_ratios:
+        # RPM = (MPH * Gear_Ratio * Final_Drive * 336.13) / Tire_Diameter_Inches
+        turbine_rpm = (mph * gear_ratio * final_drive * 336.135) / tire_dia
+    else:
+        turbine_rpm = 0.0
+
+    if rpm > 1000.0 and turbine_rpm > 100.0 and rpm >= turbine_rpm:
+        slip_rpm = rpm - turbine_rpm
+        slip_pct = (slip_rpm / rpm) * 100.0
+    else:
+        slip_rpm = 0.0
+        slip_pct = 0.0
+
+    return {
+        "gear": gear,
+        "converter_locked": bool(lockup_bit),
+        "tcc_duty_pct": round(tcc_dc, 1),
+        "turbine_rpm": round(turbine_rpm, 0),
+        "converter_slip_rpm": round(slip_rpm, 0),
+        "converter_slip_pct": round(slip_pct, 1),
+        "sloppy_transbrake_active": is_sloppy_transbrake_staging(row),
+    }
+
+
+@dataclass
+class _HistoryState:
+    """Historical engine operating state for Wideband O2 transport delay alignment."""
+    timestamp_s: float
+    rpm: float
+    map_kpa: float
+    tps: float
+    base_ve: float
+    fuel_psi: float
+    knock: float
+    fp_drop: bool
+    is_steady: bool
+
+
+@dataclass
+class VECellAccumulator:
+    """Accumulates steady-state, transport-delay-aligned telemetry hits for a (MAP, RPM) cell."""
+    hits: int = 0
+    sum_afr: float = 0.0
+    sum_target_afr: float = 0.0
+    sum_cl_comp: float = 0.0
+    sum_learn: float = 0.0
+    sum_base_ve: float = 0.0
+    sum_fuel_psi: float = 0.0
+    sum_knock: float = 0.0
+    fuel_psi_drop_hits: int = 0
+
+    def add_sample(
+        self,
+        afr: float,
+        target_afr: float,
+        cl_comp: float,
+        learn: float,
+        base_ve: float,
+        fuel_psi: float,
+        knock: float,
+        fp_drop: bool,
+    ) -> None:
+        self.hits += 1
+        self.sum_afr += afr
+        self.sum_target_afr += target_afr
+        self.sum_cl_comp += cl_comp
+        self.sum_learn += learn
+        self.sum_base_ve += base_ve
+        self.sum_fuel_psi += fuel_psi
+        self.sum_knock += knock
+        if fp_drop:
+            self.fuel_psi_drop_hits += 1
+
+
+class VETableOptimizer:
+    """
+    Fairmont VE Optimizer (16x16 RPM 500..7000 vs MAP 20..260 kPa).
+
+    Implements:
+      - Coolant Temp > 160°F verification
+      - DFCO (Decel Fuel Cutoff) exclusion
+      - Transient TPS/MAP rate-of-change rejection (|dTPS/dt| > 25%/s, |dMAP/dt| > 65 kPa/s)
+      - 3rd-gear "Sloppy Transbrake" staging exclusion
+      - Wideband O2 transport delay time-shift (100–150 ms velocity-dependent lookback)
+      - Exact mathematical VE correction: New_VE = Current_VE * (1.0 + (CL_Comp_Percent / 100.0))
+        targeting steady-state closed-loop trim error within ±2.0%.
+    """
+
+    def __init__(
+        self,
+        base_fuel_psi: float = 58.0,
+        min_coolant_f: float = 160.0,
+        d_tps_threshold: float = 25.0,
+        d_map_threshold: float = 65.0,
+        steady_trim_target_pct: float = 2.0,
+    ):
+        self.base_fuel_psi = base_fuel_psi
+        self.min_coolant_f = min_coolant_f
+        self.d_tps_threshold = d_tps_threshold
+        self.d_map_threshold = d_map_threshold
+        self.steady_trim_target_pct = steady_trim_target_pct
+
+        self.rpm_axis = list(RPM_AXIS)
+        self.map_axis = list(MAP_AXIS)
+        self.grid: List[List[VECellAccumulator]] = [
+            [VECellAccumulator() for _ in range(16)] for _ in range(16)
+        ]
+        self.total_samples_ingested = 0
+        self.filtered_samples = 0
+        self.transient_rejected_samples = 0
+        self.dfco_rejected_samples = 0
+        self.cold_rejected_samples = 0
+        self.staging_rejected_samples = 0
+        self.last_source: str = "live"
+
+        # State for rate-of-change (dTPS/dt, dMAP/dt) & wideband transport delay buffer
+        self._prev_ts: Optional[float] = None
+        self._prev_tps: Optional[float] = None
+        self._prev_map: Optional[float] = None
+        self._history_buffer: Deque[_HistoryState] = deque(maxlen=64)
+
+        # Seed default 4.8L LS + Sloppy Stage 2 + VS Racing 78/75 Base VE curve
+        self.default_base_ve: List[List[float]] = self._build_default_base_ve()
+
+    def _build_default_base_ve(self) -> List[List[float]]:
+        """
+        Seeds a realistic 4.8L LS + Elgin E-1840-P Sloppy Stage 2 (228/230) Base VE table:
+        Slightly lower vacuum idle VE (~40-46%) due to 112° LSA overlap, ramping strongly
+        into peak torque/boost (4400-5800 RPM) with the VS Racing 78/75 turbo.
+        """
+        table: List[List[float]] = []
+        for m_idx, map_val in enumerate(self.map_axis):
+            row: List[float] = []
+            load_factor = (map_val - 20.0) / 240.0
+            for r_idx, rpm_val in enumerate(self.rpm_axis):
+                rpm_curve = 1.0 - abs(rpm_val - 5000.0) / 9200.0
+                ve = (36.0 + load_factor * 54.0) * rpm_curve + (load_factor * 15.0)
+                row.append(round(max(25.0, min(128.0, ve)), 1))
+            table.append(row)
+        return table
+
+    def reset(self) -> None:
+        self.grid = [[VECellAccumulator() for _ in range(16)] for _ in range(16)]
+        self.total_samples_ingested = 0
+        self.filtered_samples = 0
+        self.transient_rejected_samples = 0
+        self.dfco_rejected_samples = 0
+        self.cold_rejected_samples = 0
+        self.staging_rejected_samples = 0
+        self._prev_ts = None
+        self._prev_tps = None
+        self._prev_map = None
+        self._history_buffer.clear()
+
+    def ingest_row(self, row: Dict[str, float], allow_cold: bool = False) -> bool:
+        """
+        Ingests a single telemetry row (from live CAN snapshot or .dl datalog),
+        performing transient dTPS/dt & dMAP/dt rejection and Wideband O2 transport
+        delay alignment (100-150 ms lookback).
+        """
+        now_ts = float(row.get("timestamp_s") or row.get("timestamp") or time.time())
+        rpm = row.get("rpm", 0.0)
+        map_kpa = row.get("map_kpa", 0.0)
+        tps = row.get("tps", 0.0)
+        afr = row.get("afr_avg") or row.get("afr_left") or 0.0
+        target_afr = row.get("target_afr", 0.0)
+        clt = row.get("coolant_temp", 185.0)
+        cl_comp = row.get("closed_loop_comp", 0.0)
+        learn = row.get("current_learn", 0.0)
+        fuel_psi = row.get("fuel_pressure", self.base_fuel_psi)
+        baro = row.get("baro_kpa", 101.325) or 101.325
+        knock = row.get("knock_retard", 0.0)
+        fuel_pw = row.get("fuel_pw", 2.5)
+
+        # 1. Compute dTPS/dt (%/s) and dMAP/dt (kPa/s)
+        d_tps_dt = row.get("tps_roc")
+        d_map_dt = row.get("map_roc")
+        if (d_tps_dt is None or d_map_dt is None) and self._prev_ts is not None:
+            dt = now_ts - self._prev_ts
+            if 0.002 <= dt <= 1.0:
+                if d_tps_dt is None and self._prev_tps is not None:
+                    d_tps_dt = (tps - self._prev_tps) / dt
+                if d_map_dt is None and self._prev_map is not None:
+                    d_map_dt = (map_kpa - self._prev_map) / dt
+            elif dt < 0:
+                # Reset history if timestamps jumped backwards (e.g. new file)
+                self._history_buffer.clear()
+
+        self._prev_ts = now_ts
+        self._prev_tps = tps
+        self._prev_map = map_kpa
+
+        d_tps_abs = abs(d_tps_dt) if d_tps_dt is not None else 0.0
+        d_map_abs = abs(d_map_dt) if d_map_dt is not None else 0.0
+        is_transient = (d_tps_abs > self.d_tps_threshold) or (d_map_abs > self.d_map_threshold)
+
+        # 2. Basic sanity & engine running check
+        if rpm < 400.0 or map_kpa < 15.0:
+            self.filtered_samples += 1
+            return False
+
+        # 3. Verify Coolant Temp > 160°F (per Fairmont VE Optimizer spec)
+        if not allow_cold and (0.1 < clt < self.min_coolant_f):
+            self.filtered_samples += 1
+            self.cold_rejected_samples += 1
+            return False
+
+        # 4. Exclude 3rd-Gear "Sloppy Transbrake" staging limiter samples from corrupting steady VE
+        if is_sloppy_transbrake_staging(row):
+            self.filtered_samples += 1
+            self.staging_rejected_samples += 1
+            return False
+
+        # 5. Exclude DFCO (Decel Fuel Cutoff)
+        if rpm > 1500.0 and tps < 1.5 and (afr > 16.0 or fuel_pw < 1.1):
+            self.filtered_samples += 1
+            self.dfco_rejected_samples += 1
+            return False
+
+        # Record current engine state in the wideband transport delay lookback ring buffer
+        m_idx_now = _nearest_index(self.map_axis, map_kpa)
+        r_idx_now = _nearest_index(self.rpm_axis, rpm)
+        base_ve_now = (
+            row.get("base_fuel_ve")
+            or row.get("estimated_ve")
+            or self.default_base_ve[m_idx_now][r_idx_now]
+        )
+
+        boost_psi_now = max(0.0, (map_kpa - baro) * 0.145038)
+        expected_fp_now = self.base_fuel_psi + boost_psi_now
+        fp_drop_now = (fuel_psi > 15.0) and (map_kpa >= 95.0) and ((expected_fp_now - fuel_psi) > 6.0)
+
+        current_state = _HistoryState(
+            timestamp_s=now_ts,
+            rpm=rpm,
+            map_kpa=map_kpa,
+            tps=tps,
+            base_ve=base_ve_now,
+            fuel_psi=fuel_psi,
+            knock=knock,
+            fp_drop=fp_drop_now,
+            is_steady=not is_transient,
+        )
+        self._history_buffer.append(current_state)
+
+        # 6. Reject transient spikes (dTPS/dt or dMAP/dt above threshold)
+        if is_transient:
+            self.filtered_samples += 1
+            self.transient_rejected_samples += 1
+            return False
+
+        # 7. Validate wideband O2 & Target AFR range
+        if target_afr < 8.0 or target_afr > 20.0 or afr < 8.0 or afr > 20.0:
+            self.filtered_samples += 1
+            return False
+
+        # 8. Wideband O2 Transport Delay Time-Shift (100-150 ms velocity-dependent lookback)
+        lag_s = estimate_wideband_transport_delay_s(rpm, map_kpa)
+        target_ts = now_ts - lag_s
+        aligned_state = current_state
+        best_dt = abs(current_state.timestamp_s - target_ts)
+        for past in reversed(self._history_buffer):
+            dt_err = abs(past.timestamp_s - target_ts)
+            if dt_err <= best_dt and (now_ts - past.timestamp_s) <= 0.500:
+                aligned_state = past
+                best_dt = dt_err
+
+        # If the historical state that generated this exhaust gas pulse was itself a transient spike, reject!
+        if not aligned_state.is_steady:
+            self.filtered_samples += 1
+            self.transient_rejected_samples += 1
+            return False
+
+        m_idx = _nearest_index(self.map_axis, aligned_state.map_kpa)
+        r_idx = _nearest_index(self.rpm_axis, aligned_state.rpm)
+
+        self.grid[m_idx][r_idx].add_sample(
+            afr=afr,
+            target_afr=target_afr,
+            cl_comp=cl_comp,
+            learn=learn,
+            base_ve=aligned_state.base_ve,
+            fuel_psi=aligned_state.fuel_psi,
+            knock=aligned_state.knock,
+            fp_drop=aligned_state.fp_drop,
+        )
+        self.total_samples_ingested += 1
+        return True
+
+    def ingest_datalog(self, file_path: str | Path) -> Dict[str, Any]:
+        """Parse an entire .dl or .dlz file and populate the 16x16 Fairmont VE matrix."""
+        parser = HolleyDatalogParser(file_path)
+        rows = parser.parse_rows()
+        self.reset()
+        self.last_source = Path(file_path).name
+        # First try strict >160°F filter; if the log was a short warmup/shop test with 0 warm rows, fallback
+        for r in rows:
+            self.ingest_row(r, allow_cold=False)
+        if self.total_samples_ingested == 0 and rows:
+            self.reset()
+            self.last_source = f"{Path(file_path).name} (cold override)"
+            for r in rows:
+                self.ingest_row(r, allow_cold=True)
+        return self.get_matrix_payload()
+
+    def get_matrix_payload(self) -> Dict[str, Any]:
+        """
+        Returns the full 16x16 matrix (ordered top-to-bottom from highest MAP 260 kPa
+        down to 20 kPa, matching Holley Terminator X V3's visual Fuel VE table layout)
+        using the Fairmont VE Optimizer mathematical correction:
+            New_VE = Current_VE * (1.0 + (CL_Comp_Percent / 100.0))
+        targeting steady-state closed-loop trim error within ±2.0%.
+        """
+        rows_out: List[Dict[str, Any]] = []
+        cells_touched = 0
+        cells_needing_change = 0
+        fp_warning_cells = 0
+        knock_cells = 0
+
+        tsv_ve_lines: List[str] = []
+        tsv_corr_lines: List[str] = []
+
+        for m_idx in range(15, -1, -1):
+            map_val = self.map_axis[m_idx]
+            row_cells: List[Dict[str, Any]] = []
+            ve_line_vals: List[str] = []
+            corr_line_vals: List[str] = []
+
+            for r_idx, rpm_val in enumerate(self.rpm_axis):
+                acc = self.grid[m_idx][r_idx]
+                default_ve = self.default_base_ve[m_idx][r_idx]
+
+                if acc.hits == 0:
+                    row_cells.append({
+                        "rpm": rpm_val,
+                        "map_kpa": map_val,
+                        "hits": 0,
+                        "base_ve": default_ve,
+                        "recommended_ve": default_ve,
+                        "correction_pct": 0.0,
+                        "afr_avg": None,
+                        "target_afr": None,
+                        "fp_warning": False,
+                        "knock_deg": 0.0,
+                    })
+                    ve_line_vals.append(f"{default_ve:.1f}")
+                    corr_line_vals.append("0.0")
+                    continue
+
+                cells_touched += 1
+                avg_afr = acc.sum_afr / acc.hits
+                avg_target = acc.sum_target_afr / acc.hits
+                avg_cl = acc.sum_cl_comp / acc.hits
+                avg_learn = acc.sum_learn / acc.hits
+                avg_base_ve = acc.sum_base_ve / acc.hits
+                avg_fp = acc.sum_fuel_psi / acc.hits
+                avg_knock = acc.sum_knock / acc.hits
+
+                # Fairmont VE Optimizer Mathematical Correction:
+                # Primary trim is Closed-Loop Compensation % (plus active Learn % if transferred).
+                # If both CL_Comp and Learn are 0.0 (e.g. open-loop WOT), use wideband AFR error %.
+                afr_err_pct = ((avg_afr - avg_target) / max(avg_target, 8.0)) * 100.0
+                if abs(avg_cl) > 0.05 or abs(avg_learn) > 0.05:
+                    cl_comp_percent = avg_cl + avg_learn
+                    # Include residual steady-state AFR error if CL hasn't finished converging
+                    if abs(afr_err_pct) > 1.0:
+                        cl_comp_percent += 0.5 * afr_err_pct
+                else:
+                    cl_comp_percent = afr_err_pct
+
+                # Clamp single-pass correction to ±20% for safety
+                clamped_corr_pct = max(-20.0, min(20.0, cl_comp_percent))
+
+                fp_warn = acc.fuel_psi_drop_hits > (acc.hits * 0.25)
+                if fp_warn:
+                    fp_warning_cells += 1
+                    # Never add positive VE fuel if mechanical rail pressure dropped below 58 PSI + 1:1 boost!
+                    if clamped_corr_pct > 0:
+                        clamped_corr_pct = 0.0
+
+                if avg_knock >= 1.5:
+                    knock_cells += 1
+
+                # Target steady-state closed-loop trim error within ±2.0%
+                if abs(clamped_corr_pct) > self.steady_trim_target_pct:
+                    cells_needing_change += 1
+
+                # Exact Spec Formula: New_VE = Current_VE * (1.0 + (CL_Comp_Percent / 100.0))
+                rec_ve = round(avg_base_ve * (1.0 + (clamped_corr_pct / 100.0)), 1)
+                rec_ve = max(15.0, min(160.0, rec_ve))
+
+                row_cells.append({
+                    "rpm": rpm_val,
+                    "map_kpa": map_val,
+                    "hits": acc.hits,
+                    "base_ve": round(avg_base_ve, 1),
+                    "recommended_ve": rec_ve,
+                    "correction_pct": round(clamped_corr_pct, 1),
+                    "afr_avg": round(avg_afr, 2),
+                    "target_afr": round(avg_target, 2),
+                    "fuel_psi": round(avg_fp, 1),
+                    "fp_warning": fp_warn,
+                    "knock_deg": round(avg_knock, 1),
+                })
+                ve_line_vals.append(f"{rec_ve:.1f}")
+                corr_line_vals.append(f"{clamped_corr_pct:+.1f}")
+
+            rows_out.append({
+                "map_kpa": map_val,
+                "boost_psig": round(max(0.0, (map_val - 101.3) * 0.145038), 1),
+                "cells": row_cells,
+            })
+            tsv_ve_lines.append("\t".join(ve_line_vals))
+            tsv_corr_lines.append("\t".join(corr_line_vals))
+
+        return {
+            "platform": FAIRMONT_PLATFORM_SPEC["vehicle"],
+            "engine": FAIRMONT_PLATFORM_SPEC["engine"],
+            "source": self.last_source,
+            "base_fuel_psi": self.base_fuel_psi,
+            "min_coolant_f": self.min_coolant_f,
+            "steady_trim_target_pct": self.steady_trim_target_pct,
+            "total_samples": self.total_samples_ingested,
+            "filtered_samples": self.filtered_samples,
+            "filter_breakdown": {
+                "transient_roc_rejected": self.transient_rejected_samples,
+                "dfco_rejected": self.dfco_rejected_samples,
+                "cold_engine_rejected": self.cold_rejected_samples,
+                "sloppy_transbrake_staging_rejected": self.staging_rejected_samples,
+            },
+            "cells_touched": cells_touched,
+            "cells_needing_change": cells_needing_change,
+            "fp_warning_cells": fp_warning_cells,
+            "knock_cells": knock_cells,
+            "rpm_axis": self.rpm_axis,
+            "map_axis_desc": list(reversed(self.map_axis)),
+            "rows": rows_out,
+            "holley_tsv_ve": "\r\n".join(tsv_ve_lines),
+            "holley_tsv_correction_pct": "\r\n".join(tsv_corr_lines),
+        }
+
+
+class PostPullDetector:
+    """
+    Automatically detects when a WOT pull starts and finishes on the 1980 Ford Fairmont,
+    auditing:
+      - Peak RPM (vs 6800 RPM hard limit)
+      - Boost PSI (12-15 PSI standard, >17 PSI pump/blend cut, 20 PSI max E85)
+      - 58 PSI base + 1:1 boost-referenced fuel rail pressure (Racetronix 420 LPH + Deka 80 lb/hr)
+      - 4L80E Gear progression, Yank 3600 RPM converter slip %, and 3rd-gear Sloppy Transbrake staging
+    """
+
+    def __init__(self, base_fuel_psi: float = 58.0):
+        self.base_fuel_psi = base_fuel_psi
+        self._in_pull = False
+        self._pull_start_ts = 0.0
+        self._pull_samples: List[Dict[str, float]] = []
+        self.recent_scorecards: List[Dict[str, Any]] = []
+
+    def on_snapshot(self, snap: Dict[str, float]) -> Optional[Dict[str, Any]]:
+        tps = snap.get("tps", 0.0)
+        rpm = snap.get("rpm", 0.0)
+        now = time.time()
+
+        if not self._in_pull:
+            if tps >= 75.0 and rpm >= 2200.0:
+                self._in_pull = True
+                self._pull_start_ts = now
+                self._pull_samples = [dict(snap)]
+            return None
+
+        if tps >= 65.0:
+            self._pull_samples.append(dict(snap))
+            return None
+
+        self._in_pull = False
+        if len(self._pull_samples) < 4:
+            self._pull_samples.clear()
+            return None
+
+        card = self.build_scorecard(self._pull_samples, duration_s=max(0.5, now - self._pull_start_ts))
+        self._pull_samples.clear()
+        self.recent_scorecards.insert(0, card)
+        del self.recent_scorecards[10:]
+        return card
+
+    def build_scorecard(self, samples: List[Dict[str, float]], duration_s: float = 0.0) -> Dict[str, Any]:
+        peak_rpm = max(s.get("rpm", 0.0) for s in samples)
+        peak_map = max(s.get("map_kpa", 100.0) for s in samples)
+        baro = samples[0].get("baro_kpa", 101.325) or 101.325
+        peak_boost = max(0.0, (peak_map - baro) * 0.145038)
+
+        avg_afr = sum(s.get("afr_avg") or s.get("afr_left") or 12.5 for s in samples) / len(samples)
+        avg_target = sum(s.get("target_afr", 12.5) for s in samples) / len(samples)
+        afr_error = avg_afr - avg_target
+
+        avg_cl = sum(s.get("closed_loop_comp", 0.0) for s in samples) / len(samples)
+        avg_learn = sum(s.get("current_learn", 0.0) for s in samples) / len(samples)
+        min_fp = min(s.get("fuel_pressure", self.base_fuel_psi) for s in samples)
+        max_duty = max(s.get("injector_duty", 0.0) for s in samples)
+        max_knock = max(s.get("knock_retard", 0.0) for s in samples)
+        ethanol_pct = max((s.get("ethanol_pct", 0.0) for s in samples), default=0.0)
+
+        # 4L80E & Yank 3600 Converter & Sloppy Transbrake metrics
+        staging_rows = [s for s in samples if is_sloppy_transbrake_staging(s)]
+        high_rpm_rows = [s for s in samples if s.get("rpm", 0.0) >= 4800.0 and s.get("vehicle_speed", 0.0) > 25.0]
+        if high_rpm_rows:
+            conv_metrics = [compute_4l80e_converter_metrics(s) for s in high_rpm_rows]
+            avg_slip_pct = sum(m["converter_slip_pct"] for m in conv_metrics) / len(conv_metrics)
+            peak_mph = max(s.get("vehicle_speed", 0.0) for s in samples)
+            top_gear = max(int(round(s.get("trans_gear", 3))) for s in high_rpm_rows)
+        else:
+            avg_slip_pct = 0.0
+            peak_mph = max((s.get("vehicle_speed", 0.0) for s in samples), default=0.0)
+            top_gear = max((int(round(s.get("trans_gear", 0))) for s in samples), default=0)
+
+        expected_fp = self.base_fuel_psi + peak_boost
+        fp_ok = (min_fp < 15.0) or (min_fp >= (expected_fp - 6.0))
+
+        # Evaluate Fairmont Boost Safety Rules (17.0 PSI low-E cut / 20.0 PSI max E85)
+        boost_limit_psi = 20.0 if ethanol_pct >= 65.0 else 17.0
+        overboost = peak_boost > boost_limit_psi
+        overrev = peak_rpm > 6800.0
+
+        verdict_parts: List[str] = [
+            f"Fairmont pull to {int(round(peak_rpm))} RPM"
+            + (f" at {peak_boost:.1f} psi boost" if peak_boost >= 1.0 else f" ({peak_map:.0f} kPa MAP)")
+            + (f" ({peak_mph:.0f} mph, 4L80E Gear {top_gear})." if peak_mph > 5.0 else ".")
+        ]
+        severity = "info"
+
+        if staging_rows:
+            stg_rpm = sum(s.get("rpm", 0.0) for s in staging_rows) / len(staging_rows)
+            stg_timing = min(s.get("ignition_timing", 5.0) for s in staging_rows)
+            verdict_parts.append(
+                f"3rd-Gear Sloppy Transbrake staged cleanly at {stg_rpm:.0f} RPM ({stg_timing:.1f}° BTDC)."
+            )
+
+        if overboost:
+            severity = "critical"
+            verdict_parts.append(
+                f"OVERBOOST ALERT: {peak_boost:.1f} psi exceeds {boost_limit_psi:.0f} psi Fairmont safety limit!"
+            )
+        if overrev:
+            severity = "critical"
+            verdict_parts.append(f"OVER-REV: {peak_rpm:.0f} RPM exceeded 6800 RPM limit!")
+        if not fp_ok:
+            severity = "critical"
+            verdict_parts.append(
+                f"WARNING: Racetronix 420 rail pressure dropped to {min_fp:.1f} psi (expected {expected_fp:.0f} psi @ 58+1:1). Do NOT add VE!"
+            )
+        if max_duty >= 85.0:
+            severity = "warning" if severity != "critical" else "critical"
+            verdict_parts.append(f"Deka 80 lb/hr injectors reached {max_duty:.1f}% duty cycle.")
+        if max_knock >= 1.5:
+            severity = "warning" if severity != "critical" else "critical"
+            verdict_parts.append(f"Knock retard reached {max_knock:.1f}°—pull 2° timing in peak torque cells.")
+        if abs(avg_cl) > 2.0 or abs(avg_learn) > 2.0 or abs(afr_error) >= 0.4:
+            if severity == "info":
+                severity = "warning"
+            direction = "rich" if (avg_cl + avg_learn < -2.0 or afr_error < -0.3) else "lean"
+            verdict_parts.append(
+                f"WOT fueling is {direction} (AFR {avg_afr:.2f} vs {avg_target:.2f}, CL/Learn {avg_cl + avg_learn:+.1f}%). Click Copy 16x16 VE Table."
+            )
+        else:
+            verdict_parts.append(f"WOT AFR tracked {avg_afr:.2f} (Target {avg_target:.2f}) within ±2% steady target.")
+
+        return {
+            "timestamp": time.time(),
+            "duration_s": round(duration_s, 1),
+            "peak_rpm": round(peak_rpm, 0),
+            "peak_map_kpa": round(peak_map, 1),
+            "peak_boost_psig": round(peak_boost, 1),
+            "boost_limit_psi": boost_limit_psi,
+            "ethanol_pct": round(ethanol_pct, 1),
+            "avg_afr": round(avg_afr, 2),
+            "target_afr": round(avg_target, 2),
+            "afr_error": round(afr_error, 2),
+            "avg_cl_comp_pct": round(avg_cl, 1),
+            "avg_learn_pct": round(avg_learn, 1),
+            "min_fuel_pressure_psi": round(min_fp, 1),
+            "expected_fuel_pressure_psi": round(expected_fp, 1),
+            "fuel_pressure_ok": fp_ok,
+            "max_injector_duty_pct": round(max_duty, 1),
+            "max_knock_retard_deg": round(max_knock, 1),
+            "top_gear_4l80e": top_gear,
+            "peak_mph": round(peak_mph, 1),
+            "yank_3600_avg_slip_pct": round(avg_slip_pct, 1),
+            "sloppy_transbrake_samples": len(staging_rows),
+            "severity": severity,
+            "verdict": " ".join(verdict_parts),
+        }
+
+
+class AutoHandoffWatcher:
+    """
+    Zero-touch background coordinator that:
+      1. Monitors Terminator X.exe WinUSB lock state (yielding or reclaiming the cable).
+      2. Watches Documents/Holley/Terminator X V3/Data Logs for new or updated .dl/.dlz files,
+         auto-ingesting them into the 16x16 Fairmont VE Optimizer and Post-Pull Scorecard engine.
+    """
+
+    def __init__(
+        self,
+        listener: Any,
+        ve_optimizer: VETableOptimizer,
+        pull_detector: PostPullDetector,
+        on_event_callback: Optional[Callable[[Dict[str, Any]], Coroutine]] = None,
+    ):
+        self.listener = listener
+        self.ve_optimizer = ve_optimizer
+        self.pull_detector = pull_detector
+        self.on_event_callback = on_event_callback
+        self._running = False
+        self._task: Optional[asyncio.Task] = None
+        self._seen_mtimes: Dict[str, float] = {}
+        self.handoff_mode: str = "initializing"
+        self.last_auto_ingested_log: Optional[str] = None
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        files = discover_local_holley_files()
+        for dl in files.get("datalogs", []):
+            self._seen_mtimes[dl["path"]] = dl["modified"]
+
+        if files.get("datalogs") and self.ve_optimizer.total_samples_ingested == 0:
+            latest = files["datalogs"][0]
+            try:
+                self._ingest_file(latest["path"])
+            except Exception as e:
+                logger.debug("Initial datalog preload skipped: %s", e)
+
+        self._task = asyncio.create_task(self._watch_loop())
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    def _ingest_file(self, path: str) -> Dict[str, Any]:
+        parser = HolleyDatalogParser(path)
+        rows = parser.parse_rows()
+        self.ve_optimizer.ingest_datalog(path)
+
+        wot_rows = [r for r in rows if r.get("tps", 0.0) >= 75.0]
+        scorecard = None
+        if wot_rows:
+            dur = wot_rows[-1].get("timestamp_s", 0.0) - wot_rows[0].get("timestamp_s", 0.0)
+            scorecard = self.pull_detector.build_scorecard(wot_rows, duration_s=max(1.0, dur))
+            self.pull_detector.recent_scorecards.insert(0, scorecard)
+            del self.pull_detector.recent_scorecards[10:]
+
+        self.last_auto_ingested_log = Path(path).name
+        return {
+            "log_name": Path(path).name,
+            "rows": len(rows),
+            "scorecard": scorecard,
+        }
+
+    async def _watch_loop(self) -> None:
+        while self._running:
+            try:
+                from app.hardware.detection import check_holley_software_lock
+                lock_info = check_holley_software_lock()
+                if lock_info.get("locked"):
+                    self.handoff_mode = "watching_holley_datalog_folder (Terminator X.exe active)"
+                elif getattr(self.listener, "_running", False):
+                    self.handoff_mode = f"live_can_streaming ({getattr(self.listener, 'interface', 'can0')})"
+                else:
+                    self.handoff_mode = "standby_auto_watch"
+
+                files = discover_local_holley_files()
+                for dl in files.get("datalogs", []):
+                    p = dl["path"]
+                    mtime = dl["modified"]
+                    prev_mtime = self._seen_mtimes.get(p)
+                    if prev_mtime is None or mtime > prev_mtime + 0.5:
+                        self._seen_mtimes[p] = mtime
+                        logger.info("Auto-ingesting updated Holley datalog: %s", dl["name"])
+                        result = self._ingest_file(p)
+                        parser = HolleyDatalogParser(p)
+                        if hasattr(self.listener, "inject_decoded_frames"):
+                            await self.listener.inject_decoded_frames(parser.to_decoded_frames())
+                        if self.on_event_callback:
+                            await self.on_event_callback({
+                                "type": "datalog_auto_ingested",
+                                **result,
+                            })
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("AutoHandoffWatcher tick error: %s", e)
+
+            await asyncio.sleep(2.5)

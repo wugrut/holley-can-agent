@@ -43,7 +43,7 @@ class TestHefiProtocolDecoder:
 
     def test_decode_dual_value_map_frame(self):
         decoder = HefiProtocolDecoder()
-        can_id = make_hefi_can_id(channel_index=2, ecu_serial=0x1A5)
+        can_id = make_hefi_can_id(channel_index=28, ecu_serial=0x1A5)
         payload = pack_payload(42.5, 101.3)
 
         frame = RawCANFrame(

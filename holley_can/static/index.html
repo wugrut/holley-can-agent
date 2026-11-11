@@ -71,6 +71,10 @@
         </div>
         
         <div class="control-group right-align">
+            <button id="btn-optimizer-toggle" class="control-btn copilot-btn"
+                    style="background: linear-gradient(135deg, #00e676, #00b0ff); color: #050a14; font-weight: 700;"
+                    data-tooltip-title="AI TUNE OPTIMIZER (16x16 VE + CTRL+V)"
+                    data-tooltip-desc="Open the automated 16x16 VE Table Optimizer, Post-Pull Scorecard, and 1-Click Ctrl+V Clipboard export for Terminator X.exe.">🎯 TUNE OPTIMIZER</button>
             <button id="btn-copilot-toggle" class="control-btn copilot-btn"
                     data-tooltip-title="AI COPILOT (ASK ENGINE)"
                     data-tooltip-desc="Open the live telemetry-grounded AI decision-support assistant to diagnose idle, fueling, boost, or faults.">🤖 COPILOT</button>
@@ -388,6 +392,56 @@
                             <p>In the detected adapters list above, locate <strong>Holley USB-CAN Cable (Part 558-443)</strong> and click the <strong>⚡ Connect</strong> button to immediately bind and stream live telemetry.</p>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Tune Optimizer Modal (16x16 VE Matrix + 1-Click Ctrl+V Holley Clipboard + Post-Pull Scorecard) -->
+    <div id="optimizer-modal" class="modal hidden" role="dialog" aria-labelledby="opt-modal-title" aria-modal="true">
+        <div class="modal-content modal-content-large" style="max-width: 1120px; width: 96vw;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <span style="color: #00e676; font-size: 18px;">🎯</span>
+                    <h3 id="opt-modal-title">AI Tune Optimizer — 16×16 Fuel VE & Post-Pull Co-Driver</h3>
+                    <span id="opt-handoff-badge" style="font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(0,229,255,0.12); color: #00e5ff; font-family: 'JetBrains Mono', monospace;">Auto-Watch Active</span>
+                </div>
+                <button id="optimizer-modal-close" class="modal-close-btn">✕</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- 1-Click Action Bar -->
+                <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                        <button type="button" id="btn-opt-copy-ve" class="action-btn primary-btn" style="background: #00e676; color: #050a14; font-weight: 700;">
+                            📋 Copy 16×16 VE Table (Ctrl+V into Holley)
+                        </button>
+                        <button type="button" id="btn-opt-copy-corr" class="action-btn secondary-btn">
+                            📋 Copy % Trim Corrections
+                        </button>
+                        <button type="button" id="btn-opt-load-dl" class="action-btn secondary-btn">
+                            📂 Load Latest Holley Datalog (.dl/.dlz)
+                        </button>
+                        <button type="button" id="btn-opt-reset" class="action-btn secondary-btn">
+                            🗑️ Reset Pass
+                        </button>
+                    </div>
+                    <div id="opt-copy-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: #00e676;">
+                        Ready — 58 PSI Base + 1:1 Boost Fuel Pressure Protected
+                    </div>
+                </div>
+
+                <!-- Post-Pull Scorecard Banner -->
+                <div id="opt-scorecard-box" style="padding: 10px 14px; border-radius: 6px; background: rgba(0, 229, 255, 0.07); border-left: 4px solid #00e5ff; font-size: 12px; line-height: 1.5;">
+                    <strong>🏁 CO-DRIVER POST-PULL VERDICT:</strong>
+                    <span id="opt-scorecard-text">Collecting live CAN samples or waiting for next Holley .dl datalog save...</span>
+                </div>
+
+                <!-- 16x16 Matrix Container -->
+                <div style="overflow-x: auto; max-height: 55vh; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;">
+                    <table id="opt-ve-table" style="width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; text-align: center;">
+                        <thead id="opt-ve-thead" style="position: sticky; top: 0; background: #0d1526; z-index: 2;"></thead>
+                        <tbody id="opt-ve-tbody"></tbody>
+                    </table>
                 </div>
             </div>
         </div>

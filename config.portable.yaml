@@ -28,15 +28,23 @@ can:
   # Listen-only safety setting: NEVER transmit or acknowledge frames on vehicle bus
   receive_own_messages: false
 
-# Vehicle Specification Context (used by diagnostic & baseline engines)
+# Vehicle Specification Context (1980 Ford Fairmont Turbo 4.8L LS + 4L80E)
 vehicle:
-  name: "Holley Terminator X MAX Vehicle"
-  engine: "6.0L LS V8"
+  name: "1980 Ford Fairmont 4-Door Boxtop (Turbo 4.8L LS)"
+  engine: "4.8L Gen III LS (Sloppy Stage 2 + VS Racing 78/75)"
+  transmission: "GM 4L80E (Yank 3600 Stall + 3rd-Gear Sloppy Transbrake)"
+  rear_axle_ratio: 3.73
+  tire_diameter_in: 25.85
   ecu_type: "Terminator X MAX"
-  target_base_fuel_pressure_psi: 58.0   # Standard LS / EFI returnless or boost-referenced base
+  target_base_fuel_pressure_psi: 58.0   # Racetronix 420 LPH + 1:1 boost-referenced @ 58 PSI base
+  injectors_lb_hr: 80.0                 # Siemens Deka 80 lb/hr high-impedance
+  standard_boost_range_psi: [12.0, 15.0]
+  pump_blend_boost_cut_psi: 17.0        # > 17.0 PSI hard safety cut on lower ethanol blends
+  max_e85_boost_psi: 20.0               # 20.0 PSI strictly on high-percentage E85
+  min_ve_learn_coolant_f: 160.0
   coolant_warning_f: 220.0
   low_voltage_v: 13.0
-  max_rpm: 6500
+  max_rpm: 6800
 
 # Persistence & Report Storage Paths
 storage:

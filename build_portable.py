@@ -61,6 +61,7 @@ def build():
     # 2. Configure PyInstaller Arguments
     entry_script = str(BASE_DIR / "portable_entry.py")
     static_data = f"{BASE_DIR / 'holley_can' / 'static'};holley_can/static"
+    dbc_data = f"{BASE_DIR / 'holley_can' / 'data'};holley_can/data"
     fixtures_data = f"{BASE_DIR / 'data' / 'fixtures'};data/fixtures"
     csv_data = f"{BASE_DIR / 'holley_can_channels.csv'};."
 
@@ -73,10 +74,13 @@ def build():
         f"--distpath={DIST_DIR}",
         f"--workpath={BASE_DIR / 'build'}",
         f"--add-data={static_data}",
+        f"--add-data={dbc_data}",
         f"--add-data={fixtures_data}",
         f"--add-data={csv_data}",
-        # CAN Backends
+        # CAN Backends & Datalog Parser & Tune Optimizer
         "--hidden-import=app.hardware.holley_usbcan",
+        "--hidden-import=holley_can.dl_parser",
+        "--hidden-import=holley_can.tune_optimizer",
         "--hidden-import=can.interfaces.pcan",
         "--hidden-import=can.interfaces.slcan",
         "--hidden-import=can.interfaces.virtual",

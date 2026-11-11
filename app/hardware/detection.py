@@ -4,8 +4,46 @@ Hardware adapter detection and environment discovery.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from typing import Any, Dict, List
+
+
+def check_holley_software_lock() -> Dict[str, Any]:
+    """
+    Checks if Holley Terminator X.exe / HolleyV6.exe is currently running on Windows.
+    Because WinUSB requires exclusive device handle access, Holley tuning software
+    must be closed (or offline) before Python can claim the 558-443 USB-to-CAN cable.
+    """
+    if sys.platform != "win32":
+        return {"locked": False, "processes": []}
+
+    locked_procs: List[str] = []
+    try:
+        out = subprocess.check_output(
+            ["tasklist", "/FO", "CSV", "/NH"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        for line in out.splitlines():
+            lower = line.lower()
+            if "terminator x.exe" in lower or "holleyv6.exe" in lower or "holleyefi.exe" in lower:
+                parts = [p.strip('"') for p in line.split(",")]
+                if parts:
+                    locked_procs.append(parts[0])
+    except Exception:
+        pass
+
+    return {
+        "locked": len(locked_procs) > 0,
+        "processes": locked_procs,
+        "hint": (
+            f"Close {', '.join(locked_procs)} (or click Offline) so WinUSB can claim the Holley USB-CAN cable."
+            if locked_procs else ""
+        ),
+    }
 
 
 def discover_available_adapters() -> List[Dict[str, Any]]:
@@ -21,6 +59,8 @@ def discover_available_adapters() -> List[Dict[str, Any]]:
             from app.hardware.holley_usbcan import enumerate_holley_devices
             holley_paths = enumerate_holley_devices(present_only=True)
             cable_present = len(holley_paths) > 0
+            lock_info = check_holley_software_lock()
+            lock_suffix = f" [NOTE: {', '.join(lock_info['processes'])} is running]" if lock_info["locked"] else ""
             adapters.append({
                 "adapter_type": "holley",
                 "name": "Holley USB-CAN Cable (Part 558-443)",
@@ -28,9 +68,11 @@ def discover_available_adapters() -> List[Dict[str, Any]]:
                 "available": True,
                 "recommended": True,
                 "cable_connected": cable_present,
+                "winusb_locked_by_holley_exe": lock_info["locked"],
                 "description": (
                     "Official Holley USBCAN Dongle (VID: 0x2AD0, PID: 0x1005 via WinUSB) at 1,000,000 bps [PASSIVE / READ ONLY]"
                     + (" — STATUS: CONNECTED & READY" if cable_present else " — STATUS: CABLE UNPLUGGED")
+                    + lock_suffix
                 ),
             })
         except Exception:
