@@ -1,291 +1,188 @@
 # System Architecture — EFI Intelligence Copilot
 
 **System:** EFI Intelligence Copilot  
-**Version:** 1.0.0-draft  
-**Architecture Style:** Layered, Event-Driven, Decoupled Modular Architecture  
-**Primary Target:** Holley Terminator X / Terminator X MAX (Agnostic Multi-ECU Core)
+**Version:** 2.0.0  
+**Architecture Style:** Layered, Event-Driven, Grounded Agentic AI Architecture  
+**Primary Target:** Holley Terminator X & Terminator X MAX (Agnostic Multi-ECU Core)
 
 ---
 
 ## 1. Architectural Philosophy
 
-EFI Intelligence Copilot separates low-level physical transport, protocol-specific decoding, normalized telemetry storage, deterministic analytics, and AI reasoning into strict, non-leaky tiers:
+EFI Intelligence Copilot separates low-level binary transport/file ingestion, mathematical filtering and optimization, grounded deterministic tools, and AI reasoning into strict, non-leaky tiers:
 
 ```
-[ PHYSICAL / TRANSPORT LAYER ]
-   │ CAN 2.0B Frames (1 Mbit/s)
-   ▼
-[ PROTOCOL DECODING TIER ]
-   │ Verified Bitfield De-muxing & IEEE 754 Conversion
-   ▼
-[ TELEMETRY NORMALIZATION TIER ]
-   │ Unit Harmonization & Signal Quality Assessment (VALID, STALE, etc.)
-   ▼
-[ PERSISTENCE & SESSION TIER ]
-   │ High-Throughput SQLite WAL Storage
-   ▼
-[ DETERMINISTIC ANALYTICS TIER ]
-   ├── Vehicle Baseline Engine (Multi-dimensional Binned Non-parametric Models)
-   ├── Event Detection Engine (Finite State Machines: Idle, Cruise, WOT, etc.)
-   └── Diagnostic Engine (Rule-based Evaluator with Evidence Chains)
+[ INGESTION & DATA SOURCES ]
+   ├── Binary Holley Datalogs (.dl / .dlz - V3 2512-byte & V6 4120-byte headers)
+   ├── Holley Global Calibration Files (.terx / .hefi)
+   ├── Real-time CAN 2.0B Frames (1 Mbit/s WinUSB / PCAN / SLCAN)
+   └── Zero-Touch AutoHandoffWatcher (1.5s background polling of Holley directories)
    │
-   ▼ Structured Findings (JSON Contracts)
-[ AI INTERPRETATION & REASONING TIER ]
-   ├── Deterministic Tool Execution Engine
-   └── Conversational "Ask Your Engine" Copilot
+   ▼
+[ DETERMINISTIC PROCESSING & OPTIMIZATION TIER ]
+   ├── HolleyDatalogReader (Decompression, struct parsing, multi-channel extraction)
+   ├── Transient Filter (|dTPS/dt| <= 25%/s, ECT >= 160°F, DFCO rejection)
+   ├── 16x16 VE Matrix Optimizer (RPM vs MAP load binning, Learn table folding)
+   └── Mechanical Fuel System Auditor (P_fuel - P_boost == 58.0 PSI differential tracking)
+   │
+   ▼
+[ GROUNDED TOOL EXECUTION TIER ]
+   ├── get_vehicle_specs()      (Injects verified vehicle invariants: 4.8L LS, Sloppy S2, 78/75)
+   ├── audit_fuel_system()      (Evaluates rail delta pressure vs boost and injector safety)
+   ├── get_ve_recommendations() (Generates 16x16 matrix with sample counts and rich/lean deltas)
+   └── analyze_datalog()        (Decompresses and summarizes WOT pulls, boost ramps, and AFR tracking)
+   │
+   ▼
+[ AGENTIC AI REASONING TIER (google-genai SDK) ]
+   ├── Google Gemini 2.5 Flash / Pro with Function Calling
+   ├── Offline Deterministic Fallback Engine (when API key is absent)
+   └── Conversational Calibration Co-Driver
+   │
+   ▼
+[ TWO-PANEL TUNING & EXPLANATION STUDIO UI ]
+   ├── Left: Gemini Calibration Co-Driver, quick prompt chips, file dropzone, audio alerts
+   └── Right: 16x16 VE Heatmap Table, Fold Learn toggle, 1-Click "Copy 16x16 VE (Ctrl+V)"
 ```
 
 ---
 
 ## 2. Directory & Package Structure
 
-The codebase is organized under `app/`, ensuring complete decoupling between modules:
+The production codebase is organized cleanly under `holley_can/`:
 
 ```text
-/app
-├── __init__.py
-├── hardware/              # Hardware Abstraction Layer (HAL)
-│   ├── __init__.py
-│   ├── interface.py       # HardwareInterface Protocol & ConnectionState
-│   ├── simulator.py       # Deterministic multi-scenario CAN simulator
-│   ├── socketcan.py       # Linux SocketCAN adapter implementation
-│   ├── usb_can.py         # Cross-platform python-can hardware adapter
-│   └── detection.py       # USB device discovery and port scanning
+holley-can-agent/
+├── Holley_EFI_Copilot.exe      # Single standalone Windows executable (~35 MB)
+├── portable_entry.py           # PyInstaller entrypoint routing to Studio or CLI
+├── build_portable.py           # Automated PyInstaller packaging script
+├── requirements.txt            # Python dependencies (google-genai, fastapi, uvicorn, etc.)
 │
-├── can/                   # CAN Data Layer
+├── holley_can/                 # Core Python Package
 │   ├── __init__.py
-│   ├── frame.py           # RawCANFrame dataclass and timestamp primitives
-│   ├── receiver.py        # Async frame receiver with backpressure queue
-│   └── filter.py          # Software & hardware mask/filter configurations
+│   ├── gemini_agent.py         # Google Gemini 2.5 integration & grounded tool declarations
+│   ├── tune_optimizer.py       # 16x16 VE calculation, transient filter, AutoHandoffWatcher
+│   ├── datalog_reader.py       # Holley .dl / .dlz binary decompression & parser
+│   ├── agent_api.py            # FastAPI REST endpoints, WebSocket broker, auto-watch coordinator
+│   ├── live_monitor.py         # Real-time CAN 2.0B listener & telemetry collector
+│   ├── holley_usb.py           # Native WinUSB transport for official Holley 558-443 cable
+│   ├── config.py               # Hardware profiles, vehicle specs, and baseline constants
+│   ├── protocol.py             # 29-bit HEFI arbitration ID decoding & IEEE-754 float unpacking
+│   └── static/                 # Streamlined Two-Panel Studio Web Assets
+│       ├── index.html          # Studio interface layout
+│       ├── style.css           # Modern dark-mode performance styling
+│       └── dashboard.js        # WebSocket client, chat manager, VE heatmap renderer
 │
-├── protocol/              # Protocol Decoding Layer
-│   ├── __init__.py
-│   ├── hefi.py            # Holley HEFI 29-bit protocol unpacker
-│   ├── registry.py        # Channel definitions and dynamic unknown handler
-│   └── base.py            # ProtocolDecoder abstract interface
+├── docs/                       # Engineering Specifications & Protocols
+│   ├── AI_ARCHITECTURE.md      # Grounded AI design, safety firewalls, prompt strategies
+│   ├── ARCHITECTURE.md         # Full system architecture (this document)
+│   ├── CAN_PROTOCOL.md         # Holley HEFI 29-bit CAN 2.0B broadcast specification
+│   ├── DIAGNOSTICS.md          # Diagnostic rules, anomaly detection, and evidence chains
+│   ├── FIELD_GUIDE_TUNING_LAPTOP.md # Tuning laptop connection & field workflow
+│   ├── HARDWARE_SUPPORT.md     # USB-to-CAN adapter compatibility & setup
+│   ├── PRODUCT.md              # Product requirements, vision, and philosophy
+│   └── ROADMAP.md              # Project status and implementation milestones
 │
-├── telemetry/             # Normalized Telemetry Model
-│   ├── __init__.py
-│   ├── quality.py         # SignalQuality enum & quality grading rules
-│   ├── signals.py         # TelemetrySignal dataclass
-│   ├── sample.py          # NormalizedTelemetrySample container
-│   └── validator.py       # Range, rate-of-change, and staleness validation
-│
-├── storage/               # Persistent Storage Engine
-│   ├── __init__.py
-│   ├── database.py        # SQLite connection manager with WAL mode
-│   ├── schema.py          # Table definitions, migrations, indexes
-│   └── repository.py      # High-performance batch insertion and queries
-│
-├── sessions/              # Session Management
-│   ├── __init__.py
-│   ├── manager.py         # Session lifecycle (Start, Record, Stop, Export)
-│   └── metadata.py        # Vehicle state, tune revision, ambient weather
-│
-├── baseline/              # Vehicle Baseline Engine
-│   ├── __init__.py
-│   ├── bins.py            # Multidimensional operating bins (RPM, MAP, CLT)
-│   ├── model.py           # Statistical metrics (median, IQR, quantiles)
-│   └── engine.py          # Baseline learner & deviation calculator
-│
-├── events/                # Deterministic Event Detection
-│   ├── __init__.py
-│   ├── detector.py        # Event detector pipeline & state machine
-│   ├── types.py           # EventType enum & EngineEvent dataclass
-│   └── rules/             # Discrete event rules (WOT, idle, thermal, etc.)
-│
-├── diagnostics/           # Rule-Based Diagnostic Engine
-│   ├── __init__.py
-│   ├── engine.py          # Diagnostic evaluator
-│   ├── finding.py         # StructuredDiagnostic contract
-│   └── rules/             # Deterministic rules (fueling, idle, sensors, etc.)
-│
-├── analytics/             # Time-Series Analytics & Comparisons
-│   ├── __init__.py
-│   ├── metrics.py         # Calculated metrics (boost, slip, duty cycle)
-│   └── compare.py         # Session-to-session comparative algorithms
-│
-├── ai/                    # AI Interpretation Layer
-│   ├── __init__.py
-│   ├── provider.py        # Agnostic LLM interface (Gemini, Claude, Local)
-│   ├── tools.py           # Deterministic data retrieval tool registry
-│   ├── prompts.py         # Strict grounding and evidence attribution prompts
-│   └── copilot.py         # "Ask Your Engine" orchestrator
-│
-├── vehicle/               # Vehicle Profile & History
-│   ├── __init__.py
-│   ├── profile.py         # Engine specs, sensor config, injector data
-│   └── history.py         # Modification timeline & correlation engine
-│
-├── reports/               # Report Generation
-│   ├── __init__.py
-│   ├── generator.py       # Report builder & scoring calculator
-│   └── templates/         # Markdown, HTML, and text templates
-│
-└── ui/                    # User Interface Interfaces
-    ├── __init__.py
-    ├── api.py             # FastAPI REST & WebSocket endpoints
-    └── dashboard/         # Static web assets & telemetry visualizers
+└── tests/                      # Automated Test Suite (111 unit tests passing)
+    ├── test_gemini_agent.py    # Unit tests for Gemini tools and offline fallback
+    ├── test_tune_optimizer.py  # Unit tests for VE calculation, transient filter, and watcher
+    ├── test_datalog_reader.py  # Unit tests for .dl/.dlz binary decoding
+    └── test_protocol.py        # Unit tests for CAN unpacking and signal validation
 ```
 
 ---
 
-## 3. Component Details & Interface Contracts
+## 3. Core Component Architectures
 
-### 3.1 Hardware Abstraction Layer (HAL)
+### 3.1 Grounded Gemini Agent Service (`holley_can/gemini_agent.py`)
 
-To guarantee that the application is never locked to a single USB dongle or operating system, all communication goes through the `HardwareInterface` Protocol:
+The AI reasoning engine uses the official `google-genai` SDK targeting **Gemini 2.5 Flash** (default) or **Gemini 2.5 Pro**:
 
-```python
-class HardwareInterface(Protocol):
-    async def connect(self) -> bool: ...
-    async def disconnect(self) -> None: ...
-    async def receive(self, timeout: float = 1.0) -> Optional[RawCANFrame]: ...
-    def is_connected(self) -> bool: ...
-    def get_status(self) -> ConnectionStatus: ...
-```
+* **Safety Invariant:** The LLM is never given direct access to operating system sockets or CAN hardware.
+* **Deterministic Function Calling:** All data is provided through four strictly declared tools:
+  1. `get_vehicle_specs()`: Returns the validated 1980 Fairmont platform specifications:
+     - GM 4.8L Iron-Block Gen III LS (LM7/LR4)
+     - Elgin Sloppy Stage 2 Cam (228/230 @ .050", .585"/.585", 112 LSA)
+     - VS Racing 78/75 cast turbocharger on Hooker BlackHeart manifold
+     - 58.0 PSI mechanical base fuel rail pressure with 1:1 boost reference
+     - Siemens Deka 80 lb/hr injectors, Continental Flex Fuel sensor
+     - GM 4L80E transmission, Yank 3600 stall, Sloppy Transbrake staging
+  2. `audit_fuel_system(session_id, min_map_kpa)`:
+     Audits effective differential fuel pressure ($P_{\text{differential}} = P_{\text{fuel}} - P_{\text{boost}}$) across boost pull windows. Enforces the $58.0 \pm 3.0\text{ PSI}$ invariant.
+  3. `get_ve_recommendations(session_id, apply_learn)`:
+     Calculates cell-by-cell 16×16 VE correction matrix, steady-state sample counts, and rich/lean deltas.
+  4. `analyze_datalog(file_path)`:
+     Decompresses and extracts WOT performance metrics, boost ramp rates, AFR tracking, and knock retard events.
 
-#### Implementations:
-1. **`VirtualSimulatorAdapter`:** Generates high-fidelity, deterministic CAN frames at configurable clock rates without real hardware. Supports 8 discrete operational profiles with injected faults.
-2. **`UsbCanAdapter`:** Cross-platform interface leveraging `python-can` backends (PCAN, Kvaser, SLCAN/CANable, Vector, USB2CAN).
-3. **`SocketCanAdapter`:** Native Linux SocketCAN driver (`can0`) utilizing C-level socket multiplexing with kernel buffering.
+* **Offline Deterministic Fallback:**
+  When no `GEMINI_API_KEY` is configured, `GeminiAgentService` gracefully falls back to deterministic rule analysis. The user receives complete, instant engineering audits without crashing or blocking.
 
-### 3.2 Protocol & Decoding Tier
+### 3.2 16×16 VE Optimizer & Transient Filter (`holley_can/tune_optimizer.py`)
 
-The protocol layer decodes raw binary frames into typed telemetry signals without modifying application state:
+Automotive calibrations require high-purity steady-state data. Naive averaging of raw datalogs contaminates VE cells with transient accelerator pump shots and cold enrichment.
 
-```text
-RawCANFrame
-├── timestamp: float (UNIX epoch seconds with microsecond resolution)
-├── channel: str (e.g. "can0", "virtual", "usb")
-├── arbitration_id: int (29-bit extended ID)
-├── dlc: int (8 bytes)
-└── data: bytes
-```
+The optimizer executes the following pipeline:
+1. **Transient Elimination:**
+   - Calculates throttle derivative: $\frac{d\text{TPS}}{dt}$.
+   - Discards all samples where $|\frac{d\text{TPS}}{dt}| > 25\% / \text{s}$.
+2. **Thermal Lockout:**
+   - Discards all samples where $\text{Coolant Temp} < 160^\circ\text{F}$.
+3. **DFCO Rejection:**
+   - Discards samples where throttle is closed ($\text{TPS} < 1\%$) while RPM remains elevated.
+4. **Load Bin Mapping:**
+   - Maps valid samples into the Holley 16×16 grid:
+     - RPM Bins: `[800, 1200, 1600, 2000, 2400, 2800, 3200, 3600, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 7500]`
+     - MAP Bins: `[20, 30, 40, 50, 60, 70, 80, 90, 100, 120, 140, 160, 180, 200, 220, 240]` kPa.
+5. **Learn Table Folding:**
+   $$\text{VE}_{\text{Recommended}} = \text{VE}_{\text{Base}} \times \left(1.0 + \frac{\text{ClosedLoopLearn}_{\%}}{100}\right)$$
+6. **Instant Export:**
+   Outputs tab-delimited text to `COPY 16x16 VE TABLE (CTRL+V).txt` for direct paste into Holley software.
 
-Decoding is executed by `HefiProtocolDecoder`:
-- Mask: `can_id & 0x1FFFF800`
-- Channel Index: `(can_id >> 14) & 0x7FF`
-- ECU Serial: `can_id & 0x7FF`
-- Payload Unpack: `struct.unpack(">ff", data)` yields `(Value A, Value B)`
+### 3.3 Zero-Touch AutoHandoffWatcher (`holley_can/tune_optimizer.py`)
 
-If a channel index is encountered that is not present in the verified configuration map, it is forwarded to `UnknownChannelHandler`, which logs the frame to an observation registry without dropping or halting the pipeline.
+To eliminate manual file picking during dyno sessions or track passes, `AutoHandoffWatcher` runs in an asynchronous background daemon thread:
+- Checks file timestamps and hashes across:
+  - `%USERPROFILE%\Documents\Holley\Terminator X V3\Data Logs\`
+  - `%USERPROFILE%\OneDrive\Documents\Holley\Terminator X V3\Data Logs\`
+  - `%USERPROFILE%\Documents\Holley\Terminator X V3\Global Files\`
+  - `G:\My Drive\Holley\`
+  - Removable SD cards / USB flash drives (`D:`, `E:`, `F:`, `G:`, `H:`)
+- When a new file is written by Holley software (e.g. after a pull):
+  1. Decompresses and parses the log within $50\text{ ms}$.
+  2. Updates 16×16 VE table recommendations.
+  3. Writes `COPY 16x16 VE TABLE (CTRL+V).txt`.
+  4. Triggers automatic Gemini run audit.
+  5. Broadcasts the update to the browser UI via WebSocket and triggers an audio chime.
 
-### 3.3 Normalized Telemetry Model
+### 3.4 Standalone Executable Packaging (`build_portable.py`)
 
-All decoded signals are converted to `TelemetrySignal` instances and tagged with rigorous quality flags:
+To ensure flawless execution on the tuning laptop without requiring Python or administrative setup:
+- PyInstaller compiles `portable_entry.py` into a single standalone `.exe` (`Holley_EFI_Copilot.exe`).
+- Bundles:
+  - Python 3.12 embedded interpreter
+  - `fastapi`, `uvicorn`, `google-genai`, `python-multipart`
+  - HTML/CSS/JS frontend assets into `sys._MEIPASS`
+- Runtime path resolver:
+  - Reads bundled static assets from `sys._MEIPASS`.
+  - Writes outputs (`COPY 16x16 VE TABLE (CTRL+V).txt`, logs, config) to `sys.executable` directory.
+- Double-clicking the `.exe` automatically spawns the background server, launches the default browser to `http://localhost:8000`, and activates the auto-watcher.
 
-```python
-class SignalQuality(Enum):
-    VALID = "valid"               # Fresh, plausible, verified sensor value
-    STALE = "stale"               # Unchanged beyond expected physical period
-    MISSING = "missing"           # Expected channel not received in timeout
-    OUT_OF_RANGE = "out_of_range" # Violates physical or sensor transducer limits
-    INVALID = "invalid"           # Corrupted float (NaN/Inf) or bad payload
-    ESTIMATED = "estimated"       # Synthesized or interpolated value
-    SIMULATED = "simulated"       # Generated by virtual simulator
-```
+---
 
-Signals are aggregated into synchronized `NormalizedTelemetrySample` frames representing a discrete point in engine operation:
-- `engine_rpm`: float (rpm)
-- `map_kpa`: float (kPa)
-- `tps`: float (%)
-- `coolant_temp`: float (°F)
-- `target_afr`: float (AFR)
-- `afr_measured`: float (AFR)
-- `fuel_learn`: float (%)
-- `battery_voltage`: float (V)
-- `trans_gear`: int (0=P/N, 1..4)
-- `oil_pressure`: Optional[float] (psi)
-- `fuel_pressure`: Optional[float] (psi)
+## 4. Hardware Transport Abstraction
 
-### 3.4 Deterministic Baseline Engine
+The physical CAN layer retains multi-adapter support for users capturing live telemetry:
 
-The baseline engine avoids global averages by binning historical telemetry across operating dimensions:
-1. **Engine State:** Crank, Warmup (CLT < 160°F), Hot Idle, Cruise, WOT Pull.
-2. **Operating Matrix:** 2D grid of RPM ($500\,\text{rpm}$ bins) $\times$ MAP ($10\,\text{kPa}$ bins).
+| Adapter | Backend Driver | Protocol | Status |
+|:---|:---|:---|:---|
+| **Holley 558-443 USB-CAN** | Native WinUSB (`holley_usb.py`) | HEFI 29-bit CAN 2.0B | `VERIFIED` |
+| **PEAK PCAN-USB** | `python-can` (`pcan`) | 29-bit CAN 2.0B @ 1 Mbps | `VERIFIED` |
+| **CANable / CANable Pro** | `python-can` (`slcan`) | 29-bit CAN 2.0B @ 1 Mbps | `VERIFIED` |
+| **Virtual Simulator** | Pure Python generator | Injected anomaly profiles | `VERIFIED` |
 
-Within each bin, the engine calculates:
-- **Median ($\tilde{x}$):** Central tendency robust against outliers.
-- **Interquartile Range ($IQR = Q_3 - Q_1$):** Measure of normal spread.
-- **5th and 95th Percentiles:** Realistic operational boundary thresholds.
+---
 
-### 3.5 Deterministic Event Detection Engine
+## 5. Security & Safety Firewalls
 
-The event engine is a collection of non-allocating, deterministic finite state machines:
-- **Engine State Transitions:** Detects stall, cranking, running, and key-off based on RPM and voltage thresholds.
-- **Transient Load Events:** Detects rapid throttle opening ($\Delta \text{TPS} / \Delta t > 15\% / 100\text{ms}$) and WOT entry ($\text{TPS} \ge 90\%$).
-- **Thermal & Electrical Thresholds:** Rapid coolant rise ($> 5^\circ\text{F} / \text{min}$ sustained) or voltage sag ($< 12.0\,\text{V}$ while engine is running).
-
-Every event emits an `EngineEvent` object:
-```json
-{
-  "event_id": "evt_20260905_0012",
-  "event_type": "WOT_PULL",
-  "start_time": 1725578410.25,
-  "end_time": 1725578414.80,
-  "severity": "info",
-  "signals_involved": ["rpm", "map_kpa", "tps", "afr_measured", "fuel_learn"],
-  "calculated_metrics": {
-    "start_rpm": 2800,
-    "peak_rpm": 5850,
-    "peak_map_kpa": 98.4,
-    "mean_fuel_learn": 8.4
-  },
-  "confidence": 1.0,
-  "evidence": "Sustained TPS >= 90% for 4.55s with RPM rise 2800->5850 rpm."
-}
-```
-
-### 3.6 Rule-Based Diagnostic Engine
-
-Diagnostics are deterministic rules that evaluate session events and baseline deviations against domain heuristics:
-
-```json
-{
-  "diagnostic_id": "DIAG_FUEL_HIGH_LOAD_DEV",
-  "title": "High-Load Fueling Deviation",
-  "severity": "warning",
-  "observation": "Closed-loop fuel learn averaged +8.2% across 4 separate WOT acceleration events between 4,800 and 5,600 RPM.",
-  "evidence": [
-    {"metric": "rpm_range", "value": "4800-5600 rpm"},
-    {"metric": "map_range", "value": "91-99 kPa"},
-    {"metric": "mean_correction", "value": "+8.2%"},
-    {"metric": "baseline_correction", "value": "+1.1%"},
-    {"metric": "repeated_events", "value": 4}
-  ],
-  "possible_causes": [
-    "Volumetric Efficiency (VE) table under-estimating airflow in 4800-5600 RPM / 95 kPa cells",
-    "Fuel rail pressure drop under high injector duty cycle",
-    "Exhaust leak upstream of wideband O2 sensor introducing false lean air"
-  ],
-  "recommended_tests": [
-    "Monitor mechanical or transducer fuel pressure during sustained WOT to verify pressure holds steady at 58 PSI",
-    "Perform smoke test on exhaust headers and collector joints upstream of O2 sensor",
-    "If fuel pressure and exhaust integrity are verified, review base fuel table cells in 4800-5600 RPM range"
-  ],
-  "confidence": 0.94,
-  "data_validity_pct": 99.8
-}
-```
-
-### 3.7 AI Interpretation Layer & Isolation Barrier
-
-```
-┌──────────────────────────────────────────────┐
-│             AI ISOLATION BOUNDARY            │
-│                                              │
-│  The LLM has NO direct CAN access, NO socket │
-│  access, and NO calibration write capability.│
-└──────────────────────┬───────────────────────┘
-                       │
-       ┌───────────────┴───────────────┐
-       ▼                               ▼
-Structured Diagnostic Findings   Deterministic Query Tools
-  - Observations                   - get_vehicle_profile()
-  - Evidence Metrics               - get_session_summary()
-  - Inferred Conditions            - query_telemetry_window()
-  - Confidence Scores              - compare_runs()
-```
-
-The AI is strictly a natural-language interpreter and conversational assistant. It synthesizes findings, articulates uncertainties, explains engineering principles to enthusiasts, and answers questions using verifiable tool data.
+1. **Read-Only Safety Invariant:** Under no circumstances does the application issue write packets, flash commands, or configuration overrides to the vehicle's ECU.
+2. **API Key Isolation:** Gemini API keys are entered by the user in the browser and stored strictly in browser `localStorage`. They are never sent to external third parties or committed to version control.
+3. **Local Loopback Only:** By default, the FastAPI server binds to `127.0.0.1:8000` to prevent unintended local network exposure.

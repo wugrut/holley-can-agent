@@ -1,7 +1,21 @@
 # EFI Intelligence Copilot — Tuning Laptop Field Guide
-### Holley Terminator X / Terminator X MAX CAN Bus Connection Manual
+### Holley Terminator X / Terminator X MAX AI Companion & Tuning Manual
 
-This field guide is designed for automotive tuners, calibrators, and dyno operators connecting a Windows laptop directly to the Holley Terminator X / X MAX CAN bus.
+This field guide is designed for automotive tuners, calibrators, and dyno operators running **Holley EFI Copilot** on a Windows tuning laptop alongside the Holley Terminator X / X MAX ECU and software.
+
+---
+
+## ⚡ Quick Start: 1-Click Launch (Recommended)
+
+1. **Copy `Holley_EFI_Copilot.exe`** to your tuning laptop (desktop or any folder, or run directly from Google Drive / USB stick).
+2. **Double-click `Holley_EFI_Copilot.exe`**.
+   - No Python installation, virtual environments, or batch files required.
+   - The app automatically launches the local server and opens your default web browser to `http://localhost:8000`.
+   - The **Zero-Touch Auto-Pilot File Watcher** immediately begins monitoring your default Holley datalog and tune folders.
+3. **Set your Google Gemini API Key** (optional, recommended for live AI commentary):
+   - Click the ⚙️ Settings gear in the header.
+   - Paste your Gemini API key (stored securely in browser local storage).
+   - *If no key is present, the app continues to operate seamlessly using its deterministic rule engine!*
 
 ---
 
@@ -87,34 +101,47 @@ To transmit telemetry over CAN, the Terminator X / X MAX ECU broadcast must be e
 
 ---
 
-## 5. Step-by-Step Field Tuning Workflow
+## 5. Step-by-Step Zero-Touch Field Tuning Workflow
 
-```
- ┌──────────────────────┐
- │  Step 1: Preflight   │  Run '4_PREFLIGHT_HARDWARE_CHECK.bat'
- │  Hardware Sniffer    │  Verify ~60Ω, 1 Mbps, and live frame reception
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Step 2: Start Log   │  Run '2_RUN_LIVE_HOLLEY_USB.bat' (or '2_RUN_LIVE_HOLLEY_CABLE.bat')
- │  Before Pull / Drive │  System runs in listen-only mode (zero write traffic)
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Step 3: Dyno / Road │  Make your pull or driving loop. Terminal displays
- │  Telemetry Capture   │  real-time RPM, MAP, AFR, CLT, and detected events.
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Step 4: Stop Log    │  Press Ctrl+C in the command window.
- │  Generate Reports    │  Auto-generates Markdown & HTML reports in /reports/
- └──────────┬───────────┘
-            ▼
- ┌──────────────────────┐
- │  Step 5: Review &    │  Open 'reports/report_<session_id>.html' in browser.
- │  Evidence Action     │  Review baseline deltas, fueling trims, and action items.
- └──────────────────────┘
-```
+`
+ ┌────────────────────────┐
+ │ Step 1: Launch App     │  Double-click 'Holley_EFI_Copilot.exe' on laptop.
+ │ Zero-Touch Auto-Watch  │  Studio UI opens in browser; watcher polls Holley folders.
+ └───────────┬────────────┘
+             ▼
+ ┌────────────────────────┐
+ │ Step 2: Make Your Pull │  Do dyno pull or street pass in Holley Terminator X software.
+ │ Save Datalog (Ctrl+S)  │  Save log (.dl / .dlz) to default Holley folder or SD card.
+ └───────────┬────────────┘
+             ▼
+ ┌────────────────────────┐
+ │ Step 3: Instant Audit  │  Copilot detects new log (<1.5s), runs safety audit,
+ │ & VE Table Optimizer   │  filters transients, and recalculates 16×16 VE matrix.
+ └───────────┬────────────┘
+             ▼
+ ┌────────────────────────┐
+ │ Step 4: 1-Click Copy   │  Click 'Copy 16×16 VE (Ctrl+V)' in the studio UI.
+ │ & Paste to Holley Tune │  Open Holley VE Table, select top-left cell, press Ctrl+V.
+ └───────────┬────────────┘
+             ▼
+ ┌────────────────────────┐
+ │ Step 5: Ask Gemini     │  Review Gemini AI summary of boost, fuel rail delta,
+ │ Deep Insights          │  and knock risk. Ask questions using quick prompts.
+ └────────────────────────┘
+`
+
+### Auto-Watch Monitored Locations:
+The watcher scans every 1.5 seconds across:
+- %USERPROFILE%\Documents\Holley\Terminator X V3\Data Logs\
+- %USERPROFILE%\OneDrive\Documents\Holley\Terminator X V3\Data Logs\
+- %USERPROFILE%\Documents\Holley\Terminator X V3\Global Files\
+- G:\My Drive\Holley\
+- Connected USB Flash Drives / SD Cards (D:\, E:\, F:\, G:\, H:\)
+
+Whenever a file is saved or dragged into the window:
+1. **Audio Bell Chime** plays alert in the browser.
+2. **16×16 VE Table** calculates corrections and writes COPY 16x16 VE TABLE (CTRL+V).txt right next to the executable.
+3. **Gemini Copilot** produces an engineering explanation of boost ramp rate, fuel rail pressure vs boost 1:1 tracking, and transient lambda safety.
 
 ---
 

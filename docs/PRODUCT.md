@@ -1,141 +1,133 @@
 # Product Requirements & Philosophy — EFI Intelligence Copilot
 
 **Target Platform:** Holley Terminator X & Terminator X MAX (with future EFI platform extensibility)  
-**Status:** In Development (Phase 0 / Phase 1)  
-**Last Updated:** September 2026
+**Status:** In Active Production / Field Testing  
+**Last Updated:** November 2026
 
 ---
 
 ## 1. Product Mission & Vision
 
-**EFI Intelligence Copilot** is an intelligence, diagnostics, and decision-support layer that operates alongside aftermarket engine management systems—beginning with the Holley Terminator X and Terminator X MAX.
+**EFI Intelligence Copilot** is an AI-powered calibration companion, diagnostic auditor, and decision-support layer designed specifically for aftermarket engine management systems—headlined by the Holley Terminator X and Terminator X MAX.
 
 ### Core Philosophy
 
-> **Holley provides ECU control and raw information.**  
-> **EFI Intelligence Copilot explains what the data means, identifies anomalies, establishes a vehicle-specific baseline, and recommends what the user should investigate or optimize.**
+> **Holley provides ECU control and raw data capture.**  
+> **EFI Intelligence Copilot explains what the data means, optimizes 16×16 VE fuel tables, identifies mechanical and sensor anomalies, audits boost-referenced fuel systems, and acts as an expert calibration co-driver.**
 
-The product is **NOT** a replacement for Holley EFI software, nor does it seek to duplicate Holley's proprietary calibration suite. Instead, it solves the fundamental problem faced by enthusiasts, amateur tuners, and racers: **data richness paired with interpretation poverty**. While a user can capture hundreds of megabytes of raw sensor values, extracting actionable insights requires hours of manual cross-referencing, deep domain knowledge, and subjective guesswork.
-
-EFI Intelligence Copilot acts as a senior automotive diagnostics engineer sitting in the passenger seat: observing patterns, comparing telemetry against historical baselines, explaining why deviations occur, and suggesting high-value, evidence-backed tests.
+The product is **NOT** a replacement for Holley EFI software, nor does it attempt to flash tunes directly into the ECU. Instead, it eliminates the bottleneck faced by grassroots racers and dyno tuners: **data richness paired with interpretation poverty**. Rather than squinting at squiggly datalog lines across hundreds of megabytes of binary logs, Copilot automatically extracts Wide-Open Throttle (WOT) pulls, verifies critical fuel rail pressure tracking, filters transient pedal noise, recalculates the entire 16×16 VE table, and generates plain-language, engineering-grounded explanations.
 
 ---
 
-## 2. Core User Experience & Workflow
+## 2. Core User Experience & Zero-Touch Workflow
 
-The user journey follows a 9-stage closed-loop workflow:
+The user experience centers on a fast, hands-free loop designed for the tuning laptop:
 
 ```
-CONNECT ──► IDENTIFY ──► MONITOR ──► RECORD ──► ANALYZE ──► EXPLAIN ──► RECOMMEND ──► COMPARE ──► LEARN
+  ┌─────────────────────────┐
+  │  1. Zero-Touch Auto-Run │  Double-click Holley_EFI_Copilot.exe on laptop.
+  │     Background Watcher  │  Automatically monitors Holley Data Logs & tunes.
+  └────────────┬────────────┘
+               ▼
+  ┌─────────────────────────┐
+  │  2. Dyno Pull / Pass    │  Do your pull; Holley software saves .dl / .dlz log.
+  │     Instant Acquisition │  Copilot detects the file in <1.5s.
+  └────────────┬────────────┘
+               ▼
+  ┌─────────────────────────┐
+  │  3. Transient Filtering │  Discards TPS tip-in/tip-out spikes (>25%/s) and
+  │     & VE Optimization   │  cold coolant (<160°F). Folds Learn into 16×16 VE table.
+  └────────────┬────────────┘
+               ▼
+  ┌─────────────────────────┐
+  │  4. 1-Click Copy/Paste  │  Click "Copy 16×16 VE (Ctrl+V)" and paste directly
+  │     into Holley Tune    │  into the Holley Terminator X Base Fuel Table.
+  └────────────┬────────────┘
+               ▼
+  ┌─────────────────────────┐
+  │  5. Gemini AI Audit     │  Gemini 2.5 reviews fuel system tracking (58 PSI rail delta),
+  │     & Interactive Chat  │  boost ramp rate, and knock risk with grounded tools.
+  └─────────────────────────┘
 ```
-
-### High-Level Stage Descriptions
-
-1. **CONNECT:** User plugs in a supported USB-CAN adapter (or connects to network/simulated source). The interface initializes cleanly without manual driver wrangling.
-2. **IDENTIFY:** The system verifies bus connectivity, reads broadcast headers, extracts the ECU serial number, and verifies device health.
-3. **MONITOR:** Displays live engine status through a clean, modern dashboard highlighting health indices (Fueling, Idle, Thermal, Electrical, Sensors).
-4. **RECORD:** High-throughput, deterministic session logger stores every valid telemetry sample, detected event, and ambient condition without frame drops.
-5. **ANALYZE:** The deterministic analytical engine scans the session against vehicle baselines and operating conditions.
-6. **EXPLAIN:** Structured diagnostic findings are translated into clear, plain-language engineering explanations.
-7. **RECOMMEND:** The system proposes prioritized, actionable next steps (e.g. physical mechanical inspections vs calibration review).
-8. **COMPARE:** Quantifies differences between runs (before vs after a cam swap, intake upgrade, or tune tweak).
-9. **LEARN:** Continuously refines vehicle-specific baselines (normal operating temperatures, idle vacuum, cruise fuel trims).
 
 ---
 
 ## 3. Strict Safety & Engineering Principles
 
-These rules are mandatory, enforced by code architecture, and non-negotiable across all development phases:
+These rules are mandatory, enforced by code architecture, and non-negotiable:
 
-### Principle 1: Zero Calibration Writes in MVP (Read-Only Safety)
-* The MVP release is **strictly read-only** with respect to engine calibration and ECU memory.
-* Autonomous tune modification is strictly forbidden.
-* Calibration flash commands, EEPROM write packets, or proprietary write handshakes will not be implemented or executed.
+### Principle 1: Zero Calibration Writes (Read-Only Safety Invariant)
+* The software is **strictly read-only** with respect to vehicle hardware, CAN bus communication, and ECU firmware.
+* Autonomous CAN write packets, tune flashing, or EEPROM modification are strictly forbidden.
+* Calibration changes are applied safely by the user via copy-paste into official Holley software.
 
-### Principle 2: Protocol Veracity (Never Invent ECU Protocols)
-* Never fabricate CAN IDs, payload bit alignments, scaling factors, or endian formats.
-* If a protocol detail is not verified by official vendor documentation, community reverse-engineering with capture validation, or physical test verification, it MUST be tagged:
-  `UNKNOWN / NEEDS VERIFIED SOURCE`
-* All channel mappings and protocol definitions are configuration-driven and replaceable.
-
-### Principle 3: Strict LLM Isolation (AI Is Reasoning, Not Control)
-* The Large Language Model (LLM) has **zero connection** to the physical CAN bus, hardware sockets, or ECU memory.
+### Principle 2: Deterministic Foundation First, AI Interpretation Second
+* The AI layer does **not** hallucinate sensor values or guess calibrations.
 * Pipeline architecture:
-  $$\text{Raw CAN} \rightarrow \text{Validated Telemetry} \rightarrow \text{Deterministic Events/Diagnostics} \rightarrow \text{Structured Findings} \rightarrow \text{AI Interpretation} \rightarrow \text{Human Recommendation}$$
-* The AI is an explanation layer that receives structured JSON findings and calls deterministic query tools. It cannot invent data or make safety-critical decisions autonomously.
+  $$\text{Datalog / CAN} \rightarrow \text{Deterministic Filtering} \rightarrow \text{Mathematical VE Calculation} \rightarrow \text{Grounded Tools} \rightarrow \text{Gemini AI Commentary}$$
+* The Gemini LLM accesses data exclusively through deterministic inspection tools (`get_vehicle_specs`, `audit_fuel_system`, `get_ve_recommendations`, `analyze_datalog`).
+* When no API key is provided, the application continues to run seamlessly using its built-in rule engine.
 
-### Principle 4: Absolute Distinction Between Observation and Inference
-* The application strictly separates and labels:
+### Principle 3: Absolute Distinction Between Observation and Inference
+* The studio UI strictly separates and labels:
   - **Observed Data:** Exact measured values, units, and timestamps.
-  - **Calculated Metrics:** Mathematical derivatives (e.g. AFR error percentage, rate of temperature rise).
-  - **Inferred Condition:** Diagnostic hypothesis derived from deterministic rules.
-  - **Possible Causes:** Ranked mechanical or calibration possibilities.
-  - **Confidence Score:** Numerical metric ($0.0$ to $1.0$) based on sample count, repeatability, and data validity.
-  - **Recommended Next Test:** Practical diagnostic step to confirm or refute the hypothesis before altering calibration.
+  - **Calculated Metrics:** Fuel rail delta pressure ($P_{\text{fuel}} - P_{\text{boost}}$), AFR error percentage, rate of TPS change.
+  - **Inferred Condition:** Diagnostic findings (e.g. "Fuel Pump Capacity Exhausted", "False Knock Event").
+  - **Action Items:** Practical mechanical checks before modifying ignition or fuel tables.
 
 ---
 
-## 4. MVP Feature Scope
+## 4. Feature Matrix
 
-### Feature A: Hardware Connection & Transport Abstraction
-* Automatic USB-CAN adapter detection.
-* Connection lifecycle management: Disconnected, Connecting, Active, Degraded, BusOff, Reconnecting.
-* Graceful hot-unplug and automatic reconnect.
-* CAN bus error monitoring and frame drop rate tracking.
+### Feature A: Streamlined Two-Panel Tuning & Explanation Studio
+* **Left Panel (Gemini AI Calibration Co-Driver):**
+  - Conversational interface powered by Google Gemini 2.5 (`google-genai` SDK).
+  - Quick-prompt diagnostic chips: "Audit Fuel System", "Optimize 16×16 VE Table", "WOT Health Check", "Detect Knock & Timing Retard".
+  - Interactive file dropzone supporting drag-and-drop `.dl`, `.dlz`, `.terx`, and `.hefi` files.
+  - Browser-side audio alert when new datalogs are processed.
+* **Right Panel (16×16 VE Heatmap Table & Scorecard):**
+  - Color-coded VE correction heatmap (rich vs lean deltas).
+  - Cell-by-cell steady-state sample count display.
+  - Toggle to fold Holley Closed-Loop Learn table directly into VE Base.
+  - **1-Click "Copy 16×16 VE (Ctrl+V)" button**: Formats the entire 16×16 matrix into tab-delimited text ready for instant paste into Holley software.
+  - WOT Performance Scorecard banner with peak boost, AFR tracking, and fuel safety indices.
 
-### Feature B: Telemetry Acquisition & Protocol Engine
-* Decodes Holley HEFI 29-bit broadcast protocol frames at 1 Mbit/s.
-* Extracts ECU serial number and dynamic channel indices.
-* Unpacks 8-byte big-endian IEEE 754 float payloads (`Value A` and `Value B`).
-* Real-time signal validation and quality classification (`VALID`, `STALE`, `MISSING`, `OUT_OF_RANGE`, `INVALID`, `SIMULATED`).
+### Feature B: Zero-Touch Auto-Pilot File Watcher
+* Background thread (`AutoHandoffWatcher`) polling every 1.5 seconds across:
+  - `%USERPROFILE%\Documents\Holley\Terminator X V3\Data Logs\`
+  - `%USERPROFILE%\OneDrive\Documents\Holley\Terminator X V3\Data Logs\`
+  - `%USERPROFILE%\Documents\Holley\Terminator X V3\Global Files\`
+  - `G:\My Drive\Holley\`
+  - Removable USB drives and SD cards (`D:`, `E:`, `F:`, `G:`, `H:`)
+* Automatically parses new logs, updates the studio over WebSockets, and writes `COPY 16x16 VE TABLE (CTRL+V).txt` right next to the executable.
 
-### Feature C: Time-Series Session Logger
-* SQLite WAL-mode streaming storage with low memory overhead.
-* Rich metadata schema: vehicle profile, session type (Cold Start, Idle, Cruise, WOT, Dyno, Troubleshooting), driver notes, environmental context.
-* Zero data loss on unexpected shutdown or abrupt disconnection.
+### Feature C: Binary Datalog Parser (`.dl` and `.dlz`)
+* Native decompression and parsing of Holley binary log formats:
+  - Terminator X V3 (2,512-byte headers).
+  - Holley EFI V6 (4,120-byte headers).
+* Full channel extraction: RPM, MAP, TPS, Target AFR, Measured AFR, Closed-Loop Compensation, Learn Status, Fuel Pressure, Coolant Temp, MAT/IAT, Ignition Timing, Knock Retard, Battery Voltage.
 
-### Feature D: Interactive Telemetry Replay
-* Time-scrubbing synchronized charts.
-* Event markers and diagnostic anomaly highlighting.
-* Configurable multi-signal overlays (e.g. RPM vs MAP vs Target AFR vs Measured AFR vs Fuel Learn).
-* CSV and JSON data export.
+### Feature D: Deterministic 16×16 VE Optimizer
+* Maps raw datalog samples into standard 16×16 Holley RPM vs MAP load bins.
+* Transient rejection filter:
+  - Discards samples where $|d\text{TPS}/dt| > 25\%/\text{s}$ (accelerator pump transients).
+  - Discards samples where $\text{ECT} < 160^\circ\text{F}$ (cold enrichment warm-up).
+  - Discards deceleration fuel cut-off (DFCO) events.
+* Computes weighted cellular corrections with sample confidence thresholds.
 
-### Feature E: Vehicle Baseline Engine
-* Context-aware statistical modeling across operating bins (RPM, MAP, TPS, Coolant Temp).
-* Robust non-parametric metrics (Median, Interquartile Range, 5th/95th percentiles) rather than naive averages.
-* Dynamic baseline learning across multiple sessions.
+### Feature E: Fuel System Differential Pressure Audit
+* Enforces the critical 58 PSI boost-referenced rail pressure invariant:
+  $$P_{\text{differential}} = P_{\text{fuel}} - P_{\text{boost}} \approx 58.0 \pm 3.0\text{ PSI}$$
+* Identifies fuel pump capacity exhaustion, clogged fuel filters, and kinked reference lines before engine damage occurs.
 
-### Feature F: Deterministic Event Detection
-* Discrete state identification: Engine Crank, Idle, Cruise, Rapid Acceleration, Deceleration, Wide Open Throttle (WOT), Thermal Spike, Low Voltage, Sensor Dropout.
-* Structured event objects containing start/end timestamps, peak values, and evidence signals.
-
-### Feature G: Deterministic Diagnostic Engine
-* Initial high-confidence diagnostic rules:
-  1. High-load fueling deviation (lean/rich drift under boost/WOT).
-  2. Idle RPM hunting and closed-loop oscillation.
-  3. Sensor dropout / implausible sensor relationships (e.g. high MAP with zero TPS).
-  4. Charging system instability / low voltage.
-  5. Coolant and Intake Air Temperature (IAT) anomalies.
-* Explicit evidence chaining with sample validity metrics.
-
-### Feature H: AI Reasoning Layer & "Ask Your Engine"
-* Structured JSON findings fed to an LLM provider abstraction.
-* Tool-driven conversational query engine: retrieves exact telemetry, compares runs, and explains findings.
-* Strictly prevents hallucination of telemetry values.
-
-### Feature I: Professional Reporting
-* Comprehensive health report generation (HTML/Markdown/PDF export).
-* Domain-specific sub-scores (Fueling, Idle, Sensors, Thermal, Electrical) and prioritized diagnostic action items.
-
-### Feature J: Comprehensive Telemetry Simulator
-* Mandatory virtual adapter enabling offline development, CI/CD testing, and demonstration.
-* 8 deterministic operational profiles with injected anomalies (idle hunting, lean pull, thermal runaway, sensor dropout).
+### Feature F: Single Standalone Executable (`Holley_EFI_Copilot.exe`)
+* Bundles Python runtime, FastAPI backend, Uvicorn server, Gemini SDK, and responsive web assets into a single portable `.exe` (~35 MB).
+* Zero dependencies, zero installation, and zero configuration on the tuning laptop.
 
 ---
 
-## 5. Non-Goals for MVP
+## 5. Non-Goals
 
-1. **ECU Calibration Writing:** No binary flash routines, table updates, or tune modifications.
-2. **Autonomous Closed-Loop Tuning:** No automatic modification of fuel or ignition maps.
-3. **Hardware Proprietary Lock-In:** The software must never rely on a single vendor's USB dongle or operating system.
-4. **Generic OBD-II Dongle Replacement:** The initial focus is deep aftermarket EFI telemetry via CAN 2.0B, not generic OBD-II PID polling.
+1. **Autonomous ECU Flashing:** The software will never write binary files or calibration tables directly over CAN to the ECU.
+2. **Proprietary Hardware Lock-In:** Operates with native Holley USB-to-CAN cables (558-443), standard USB-CAN dongles (PEAK, CANable), or purely from saved log files without any CAN hardware.
+3. **Gauge Cluster Duplication:** Does not attempt to replace primary in-dash physical or digital cluster displays; focused entirely on calibration intelligence and diagnostic decision-support.

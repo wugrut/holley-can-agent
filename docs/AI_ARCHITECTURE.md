@@ -1,158 +1,119 @@
-# AI Architecture & Reasoning Layer Specification
+# AI Architecture & Calibration Reasoning Specification
+### Google Gemini 2.5 Agentic Calibration Co-Driver for Holley EFI
 
-**System:** EFI Intelligence Copilot  
-**Tier:** AI Reasoning & Natural Language Interface  
-**Status:** In Development  
-**Last Updated:** September 2026
+**System:** Holley EFI Intelligence Copilot  
+**Tier:** Agentic AI Reasoning & Calibration Decision-Support  
+**Backend:** Official `google-genai` SDK (`gemini-2.5-flash` / `gemini-2.5-pro`) + Deterministic Fallback  
+**Vehicle:** 1980 Ford Fairmont 4.8L Turbo LS + GM 4L80E  
 
 ---
 
-## 1. Safety & Isolation Barrier
+## 1. Safety Firewall & Architectural Boundary
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          PHYSICAL CONTROL BOUNDARY                      │
+│                        PHYSICAL CONTROL BOUNDARY                        │
 │                                                                         │
-│   CAN BUS ◄────► [ HAL / Transports ] ◄────► [ ECU Calibration ]        │
+│   HOLLEY ECU ◄───► [ Metri-Pack CAN 1 ] ◄───► [ Datalog .dl / .dlz ]    │
 │                               ▲                                         │
-│                               │ HARDWARE FIREWALL: ZERO LLM ACCESS      │
+│                               │ HARDWARE FIREWALL: ZERO WRITE ACCESS    │
 │                               ▼                                         │
-│                    [ Deterministic Engine ]                             │
-│                  - Event Detection (Python)                             │
-│                  - Baseline Statistics (NumPy)                          │
-│                  - Rule-Based Diagnostics (Python)                      │
+│                 [ Deterministic Calibration Core ]                      │
+│                  - 16×16 VE Matrix Optimizer (NumPy)                    │
+│                  - Post-Pull WOT Slicer & Detector                      │
+│                  - 1:1 Boost-Referenced Rail Differential Auditor       │
+│                  - 4L80E Converter Slip & Staging Analyzer              │
 └───────────────────────────────┬─────────────────────────────────────────┘
-                                │ Structured JSON Data Only
+                                │ Typed Python Tool Execution
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                      AI REASONING & INTERPRETATION                      │
+│               GEMINI 2.5 AGENTIC REASONING ENGINE                       │
 │                                                                         │
-│   [ Agnostic LLM Gateway ] (Gemini, Claude, OpenAI, Local Ollama)       │
+│   [ Google GenAI SDK (Client) ] ── Gemini 2.5 Flash / Pro               │
 │                               ▲                                         │
 │                               ▼                                         │
-│                 [ Deterministic Tool Registry ]                         │
-│                 - get_vehicle_profile()                                 │
-│                 - query_telemetry()                                     │
-│                 - query_events()                                        │
-│                 - query_diagnostics()                                   │
-│                 - compare_sessions()                                    │
+│                 [ Grounded Domain Tools ]                               │
+│                 - get_vehicle_specs()                                   │
+│                 - analyze_datalog(path)                                 │
+│                 - audit_fuel_system(path)                               │
+│                 - get_ve_recommendations(include_learn)                 │
+│                 - list_available_datalogs()                             │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Non-Negotiable Invariants
-1. **Zero Actuation / Zero Transmission:** The AI layer possesses no code pathways, network endpoints, or privileges to transmit CAN frames, toggle ECU outputs, or flash calibrations.
-2. **Zero Direct Memory Access:** The AI cannot inspect or alter internal process memory of the CAN listener or storage threads.
-3. **Deterministic Tool Gating:** All factual data presented to the user (e.g. "RPM reached 6,240") must originate from deterministic tool query outputs. If the model makes a numerical claim without tool backing, it is considered a safety defect.
+1. **Zero Actuation / Zero Calibration Flashing:** The AI layer possesses no code pathways, network endpoints, or privileges to transmit flash commands or modify ECU EEPROM memory. All tuning suggestions are presented as formatted decision support for the tuner.
+2. **Deterministic Tool Gating (Zero Hallucination):** Every numerical metric (RPM, AFR, boost PSI, rail differential, VE corrections) must originate from executed tool calls. The model is forbidden from inventing telemetry values.
+3. **Offline Reliability:** If an API key is not supplied or the tuner is at a remote track without internet, the system automatically falls back to the local deterministic rule engine (`CopilotService`).
 
 ---
 
-## 2. Structured Findings Input Contract
+## 2. Target Platform Grounding Parameters
 
-The AI does not receive thousands of raw CAN frames. It receives curated, structured analysis packages:
+The Gemini system instruction seeds the agent with the verified specifications of the 1980 Ford Fairmont:
 
 ```json
 {
-  "vehicle": {
-    "vehicle_id": "veh_foxbody_ls3",
-    "name": "1989 Mustang LX (LS3 Swap)",
-    "engine": "GM 6.2L LS3 V8",
-    "ecu_type": "Holley Terminator X MAX",
-    "fuel_type": "93 Octane Pump Gas",
-    "modifications": [
-      {"date": "2026-08-15", "mod": "BTR Stage 2 Camshaft installed"},
-      {"date": "2026-08-20", "mod": "1-7/8 Long Tube Headers installed"}
-    ]
-  },
-  "session": {
-    "session_id": "sess_20260905_wot01",
-    "type": "Street Drive with WOT Pulls",
-    "duration_s": 1240.5,
-    "valid_telemetry_pct": 99.8
-  },
-  "baseline": {
-    "idle_rpm_median": 850,
-    "idle_map_kpa_median": 48.2,
-    "cruise_fuel_learn_iqr": [-1.5, 2.1],
-    "coolant_normal_range": [182.0, 198.0]
-  },
-  "detected_events": [
-    {
-      "event_type": "WOT_PULL",
-      "timestamp": 1725578410.0,
-      "duration_s": 4.6,
-      "peak_rpm": 5850,
-      "peak_map_kpa": 98.4
-    }
-  ],
-  "diagnostics": [
-    {
-      "diagnostic_id": "DIAG_FUEL_HIGH_LOAD_DEV",
-      "severity": "warning",
-      "observation": "Closed-loop fuel learn averaged +8.2% across 4 high-load events.",
-      "evidence": [
-        {"metric": "rpm_band", "value": "4800-5600 rpm"},
-        {"metric": "mean_correction", "value": "+8.2%"}
-      ],
-      "possible_causes": [
-        "VE table values low in high-load region",
-        "Fuel pressure drop under high demand",
-        "Exhaust leak upstream of wideband"
-      ],
-      "recommended_tests": [
-        "Verify mechanical fuel rail pressure holds 58 PSI during WOT",
-        "Perform smoke test on header collector joints"
-      ],
-      "confidence": 0.94
-    }
-  ]
+  "vehicle": "1980 Ford Fairmont 4-Door 'Boxtop' (Fox Platform, ~3300 lbs)",
+  "engine": "GM 4.8L Gen III Iron Block LS (LM7/LR4)",
+  "camshaft": "Elgin E-1840-P Sloppy Stage 2 (228/230 @ .050, .585/.585 lift, 112 LSA)",
+  "turbocharger": "VS Racing 78/75 on Hooker BlackHeart manifold, 3-inch FMIC, 50mm BOV",
+  "fuel_system": "Racetronix 420 LPH pump, 58 PSI base mechanical rail pressure (1:1 boost-ref)",
+  "injectors": "Siemens Deka 80 lb/hr High-Z + Continental Flex Fuel (E85 / 93 Octane)",
+  "transmission": "GM 4L80E (Alto Red Eagle clutches, TransGo HD2) + Yank 3600 RPM stall converter",
+  "staging": "3rd-Gear Mechanical Bind-Up Sloppy Transbrake (3000-3200 RPM @ 0-5 deg BTDC)",
+  "rear_axle": "Ford 8.8-inch SN95 (3.73:1 gears, 245/45R17 drag radials)",
+  "limits": {
+    "base_fuel_psi": 58.0,
+    "standard_boost_range_psi": [12.0, 15.0],
+    "pump_blend_boost_cut_psi": 17.0,
+    "max_e85_boost_psi": 20.0,
+    "redline_rpm": 6800.0
+  }
 }
 ```
 
 ---
 
-## 3. "Ask Your Engine" Deterministic Tool Registry
+## 3. Grounded Agentic Tools
 
-In conversational mode, the LLM utilizes function calling against a deterministic API:
+The `GeminiAgent` registers Python callable tools directly with `google.genai.types.GenerateContentConfig(tools=[...])`:
 
-```python
-class EngineCopilotTools(Protocol):
-    def get_vehicle_profile(self) -> dict: ...
-    def get_recent_sessions(self, limit: int = 5) -> list[dict]: ...
-    def get_session_summary(self, session_id: str) -> dict: ...
-    def query_telemetry(
-        self, session_id: str, channels: list[str], start_time: float, end_time: float
-    ) -> dict: ...
-    def query_events(
-        self, session_id: str, event_type: Optional[str] = None
-    ) -> list[dict]: ...
-    def query_diagnostics(
-        self, session_id: str, min_severity: str = "info"
-    ) -> list[dict]: ...
-    def compare_sessions(
-        self, session_a: str, session_b: str, channel: str
-    ) -> dict: ...
-    def get_modification_history(self) -> list[dict]: ...
-```
+### `audit_fuel_system(file_path: Optional[str] = None)`
+Audits whether mechanical fuel pressure properly tracked boost 1:1:
+$$\Delta P = P_{\text{fuel}} - P_{\text{boost}} \approx 58.0\text{ PSI}$$
+- Evaluates every sample where $P_{\text{boost}} \ge 2.0\text{ PSI}$.
+- Identifies critical drops where effective differential falls below $53.0\text{ PSI}$.
+- Flags pump flow starvation, voltage sags, or regulator vacuum reference failures.
+
+### `get_ve_recommendations(include_learn: bool = True)`
+Returns the 16×16 VE cell hit matrix, transient exclusions, top rich/lean trim cells, and the formatted TSV string for Holley software clipboard pasting.
+- Filters out $|d\text{TPS}/dt| > 25\%/\text{s}$ and $|d\text{MAP}/dt| > 65\text{ kPa/s}$.
+- Filters out $\text{ECT} < 160^\circ\text{F}$ and DFCO events.
+- Folds both Closed-Loop Compensation % and Fuel Learn % into base VE cells:
+  $$\text{Target\_VE} = \text{Base\_VE} \times \left(1 + \frac{\text{CL\_Comp} + \text{Fuel\_Learn}}{100}\right)$$
+
+### `analyze_datalog(file_path: Optional[str] = None)`
+Parses Terminator X V3 (`0x0095365F`, 2512 bytes/row) and Holley V6 (`0x0085F41F`, 4120 bytes/row) binary datalogs.
+- Automatically handles RLE decompressor and 4-byte endian swaps for `.dlz` files.
+- Extracts WOT intervals, peak boost, wideband AFR error against target AFR, minimum rail pressure, max injector duty cycle, and knock retard.
 
 ---
 
-## 4. Provider-Agnostic LLM Interface
+## 4. Zero-Touch Auto-Pilot Integration
 
-To prevent vendor lock-in, the AI gateway exposes a unified interface:
-
-```python
-class LLMProvider(Protocol):
-    async def generate_response(
-        self,
-        system_prompt: str,
-        messages: list[dict],
-        tools: list[dict],
-        temperature: float = 0.2
-    ) -> LLMResponse: ...
-```
-
-Implementations:
-1. `GoogleGeminiProvider` (Gemini 2.5/3.8 Flash & Pro)
-2. `AnthropicClaudeProvider` (Claude 3.5 Sonnet)
-3. `OpenAIProvider` (GPT-4o)
-4. `LocalOllamaProvider` (Llama 3 / Mistral via local HTTP API)
+When the background file watcher (`AutoHandoffWatcher`) detects a new datalog save in `Documents\Holley\Terminator X V3\Data Logs\`:
+1. Slices out WOT intervals and runs the post-pull detector.
+2. Ingests steady-state points into `VETableOptimizer`.
+3. Dispatches an automated background prompt to Gemini:
+   ```text
+   AUTOMATED POST-PULL AUDIT: A new Holley datalog 'run_04.dl' was just saved.
+   • Peak Boost: 14.2 PSI @ 6,100 RPM
+   • Average AFR: 11.4 vs Target 11.5 (Error: -0.10)
+   • Minimum Fuel Pressure: 72.2 PSI (effective delta: 58.0 PSI vs 58.0 PSI target)
+   • Max Injector Duty Cycle: 68.4%
+   Audit this run: confirm if 1:1 boost-referenced fuel pressure held safe,
+   summarize wideband tracking, and give 2-3 specific tuning takeaways.
+   ```
+4. Gemini's response is pushed in real time over WebSocket to the web studio chat, with audible announcement via browser speech synthesis.
+5. The updated 16×16 VE table is automatically written to `COPY 16x16 VE TABLE (CTRL+V).txt` on disk.

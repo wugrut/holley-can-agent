@@ -1,152 +1,143 @@
-# Product Roadmap & Phased Implementation Plan
+# Product Roadmap & Implementation Milestones
 
 **Product:** EFI Intelligence Copilot  
-**Status:** In Active Development  
-**Current Milestone:** Phase 0 (Docs & Skeleton) & Phase 1 (HAL & Simulator)
+**Status:** In Active Production / Field Testing  
+**Current Milestone:** Phase 9 (In-Vehicle Field Testing on 1980 Fairmont Platform)  
+**Last Updated:** November 2026
 
 ---
 
-## 1. Release Schedule & Status Taxonomy
+## 1. Status Taxonomy
 
-To guarantee that software and simulation success is never confused with live ECU hardware compatibility, components and capabilities are categorized according to the explicit audit taxonomy:
+Capabilities and milestones are tracked according to our verification taxonomy:
 
-* **`SIMULATED`**: Functionality implemented and validated within the virtual simulator adapter.
-* **`FIXTURE_VERIFIED`**: Validated by automated unit tests against synthetic replay data fixtures.
-* **`SOURCE_VERIFIED`**: Confirmed by published third-party integration specifications (e.g. RealDash XML, CANformance Wiki, Racepak broadcast guides).
-* **`HOLLEY_SOURCE_VERIFIED`**: Directly confirmed by official Holley documentation or vendor DBC files.
-* **`LIVE_HARDWARE_VERIFIED`**: Empirically validated with physical bus traces on a running Terminator X / X MAX ECU.
-* **`ASSUMED`**: Architecture accommodates this assumption, but empirical verification is pending.
-* **`UNKNOWN`**: Unverified, speculative, or unmapped protocol detail (`NEEDS VERIFIED SOURCE`).
-* **`BLOCKED`**: Intentionally prohibited (e.g. calibration writes) or blocked pending external physical access.
-* **`IMPLEMENTED`**: Code is written, reviewed, and present in the codebase.
-* **`FUTURE`**: Formally scheduled for a future milestone; out of current scope.
+* **`IMPLEMENTED`**: Code is written, reviewed, tested, and present in repository.
+* **`FIXTURE_VERIFIED`**: Validated by automated unit tests against synthetic and real binary fixtures.
+* **`HARDWARE_VERIFIED`**: Empirically validated with physical bus traces or official cables (e.g. Holley 558-443).
+* **`IN_PROGRESS`**: Under active implementation or real-world field testing.
+* **`FUTURE`**: Formally scheduled for subsequent release cycles.
 
 ---
 
-## 2. Phase-by-Phase Roadmap
+## 2. Milestone Progress Overview
 
 ```
-Phase 0 ──► Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5 ──► Phase 6
-Skeleton    HAL/Sim     Protocol    Dashboard   Storage     Baseline    Events
-                                                                          │
-Phase 12 ◄─ Phase 11 ◄─ Phase 10 ◄─ Phase 9  ◄─ Phase 8  ◄─ Phase 7 ◄─────┘
-Tune Intel  Reporting   History     Ask Engine  AI Reason   Diagnostics
+Phase 0 ──► Phase 1 ──► Phase 2 ──► Phase 3 ──► Phase 4 ──► Phase 5
+Docs        HAL/USB     Protocol    Datalog     VE Engine   Gemini AI
+  [✓]         [✓]         [✓]         [✓]         [✓]         [✓]
+                                                               │
+Phase 9 ◄── Phase 8 ◄── Phase 7 ◄── Phase 6 ◄─────────────────┘
+Vehicle     Packaging   Auto-Watch  Studio UI
+ [ACTIVE]     [✓]         [✓]         [✓]
 ```
 
 ---
 
-### Phase 0: Project Skeleton & Documentation Foundation
-* **Status:** `IMPLEMENTED` / `VERIFIED`
+## 3. Completed Phases
+
+### Phase 0: Project Architecture & Safety Foundation
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
 * **Deliverables:**
-  - Standardized directory layout under `app/`.
-  - Comprehensive specification suite in `/docs` (`PRODUCT.md`, `ARCHITECTURE.md`, `CAN_PROTOCOL.md`, `TELEMETRY_SCHEMA.md`, `DIAGNOSTICS.md`, `AI_ARCHITECTURE.md`, `TEST_PLAN.md`, `ROADMAP.md`, `SECURITY.md`, `HARDWARE_SUPPORT.md`).
-  - Strict read-only and LLM safety invariants established.
+  - Decoupled modular architecture under `holley_can/`.
+  - Comprehensive specification documents (`PRODUCT.md`, `ARCHITECTURE.md`, `CAN_PROTOCOL.md`, `AI_ARCHITECTURE.md`, `FIELD_GUIDE_TUNING_LAPTOP.md`).
+  - Strict read-only safety invariant enforced (no CAN write packets or autonomous ECU flashing).
 
----
-
-### Phase 1: Hardware Abstraction Layer & Telemetry Simulator
-* **Status:** `IN PROGRESS`
+### Phase 1: Hardware Abstraction & Transport Layer
+* **Status:** `IMPLEMENTED` / `HARDWARE_VERIFIED`
 * **Deliverables:**
-  - `HardwareInterface` Protocol definition.
-  - `VirtualSimulatorAdapter` supporting 8 deterministic operational profiles with injected anomalies.
-  - `UsbCanAdapter` and `SocketCanAdapter` implementations.
-  - Unit tests for hardware lifecycle, auto-reconnect, and frame generation.
-
----
+  - `HolleyUsbTransport`: Native WinUSB communication for official Holley 558-443 cable (no PEAK drivers needed).
+  - Cross-platform `python-can` support: PEAK PCAN-USB and CANable (SLCAN).
+  - Virtual CAN Simulator with 8 deterministic operational profiles.
+  - Multi-adapter auto-detection and hardware preflight utility (`4_PREFLIGHT_HARDWARE_CHECK.bat`).
 
 ### Phase 2: Protocol Layer & Telemetry Normalization
-* **Status:** `SCHEDULED`
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
 * **Deliverables:**
-  - Standardized `RawCANFrame` and `TelemetrySignal` dataclasses.
-  - Dynamic channel registry and unverified channel observer.
-  - Real-time `SignalQuality` assessment (`VALID`, `STALE`, `MISSING`, `OUT_OF_RANGE`, `INVALID`, `SIMULATED`).
-  - Derived calculations (boost psi, manifold vacuum inHg, AFR error %, injector duty cycle %).
+  - 29-bit extended CAN ID de-multiplexer and IEEE 754 big-endian float unpacker.
+  - Signal validation pipeline (`VALID`, `STALE`, `OUT_OF_RANGE`, `INVALID`, `SIMULATED`).
+  - Derived metric computation: boost psi, AFR error %, fuel rail differential pressure ($P_{\text{fuel}} - P_{\text{boost}}$).
+
+### Phase 3: Binary Datalog Parser (`.dl` and `.dlz`)
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
+* **Deliverables:**
+  - Pure Python decompression and binary struct parser for Holley datalogs:
+    - Terminator X V3 (2,512-byte header format).
+    - Holley EFI V6 (4,120-byte header format).
+  - High-speed slice extraction for WOT acceleration windows, idle stability, and thermal events.
+
+### Phase 4: Deterministic 16×16 VE Optimizer & Transient Filter
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
+* **Deliverables:**
+  - Transient rejection filter:
+    - Rejects samples where $|d\text{TPS}/dt| > 25\%/\text{s}$ (accelerator pump transients).
+    - Rejects samples where $\text{ECT} < 160^\circ\text{F}$ (cold warm-up).
+    - Rejects deceleration fuel cut-off (DFCO) conditions.
+  - RPM vs MAP 16×16 load bin mapping matching Holley Terminator X tables.
+  - Closed-loop Learn table folding into VE Base.
+  - 1-click clipboard formatting: generates tab-delimited text ready for instant `Ctrl+V` into Holley software.
+
+### Phase 5: Grounded Gemini 2.5 Agent Integration
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
+* **Deliverables:**
+  - Official Google `google-genai` SDK integration supporting Gemini 2.5 Flash and Pro.
+  - Deterministic tool declarations with parameter schemas:
+    - `get_vehicle_specs`: Vehicle invariants for 1980 Fairmont (4.8L LS, Sloppy Stage 2, 78/75 turbo, 4L80E).
+    - `audit_fuel_system`: Boost-referenced fuel rail pressure ($58.0 \pm 3.0\text{ PSI}$) tracking check.
+    - `get_ve_recommendations`: 16×16 cell-by-cell rich/lean delta matrix and sample counts.
+    - `analyze_datalog`: In-depth datalog decompression and performance summary.
+  - Offline deterministic fallback engine when no API key is provided.
+
+### Phase 6: Streamlined Two-Panel Studio UI
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
+* **Deliverables:**
+  - Streamlined, high-contrast dark-mode interface:
+    - Left Panel: Gemini AI Calibration Co-Driver, quick prompt chips, file dropzone, audio alert notifications, and API key management modal.
+    - Right Panel: 16×16 VE Heatmap Table, Fold Learn toggle, cell sample counts, WOT Scorecard banner, and 1-Click "Copy 16×16 VE (Ctrl+V)" button.
+  - High-frequency WebSocket communication for instant UI updates.
+
+### Phase 7: Zero-Touch Auto-Pilot File Watcher
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
+* **Deliverables:**
+  - Background daemon thread (`AutoHandoffWatcher`) scanning every 1.5 seconds.
+  - Automatically watches default Holley directories:
+    - `%USERPROFILE%\Documents\Holley\Terminator X V3\Data Logs\`
+    - `%USERPROFILE%\OneDrive\Documents\Holley\Terminator X V3\Data Logs\`
+    - `%USERPROFILE%\Documents\Holley\Terminator X V3\Global Files\`
+    - `G:\My Drive\Holley\`
+    - Connected USB flash drives / SD cards (`D:`, `E:`, `F:`, `G:`, `H:`).
+  - Hands-free processing: automatically parses new files, updates VE tables, triggers Gemini run audit, and chimes alert.
+
+### Phase 8: Standalone Portable Single Binary Distribution
+* **Status:** `IMPLEMENTED` / `FIXTURE_VERIFIED`
+* **Deliverables:**
+  - PyInstaller `--onefile` packaging script (`build_portable.py`).
+  - Standalone `Holley_EFI_Copilot.exe` (~35 MB) bundling Python 3.12, FastAPI, Uvicorn, Gemini SDK, and static web assets.
+  - Automatic browser launch on double-click; zero installation or command-line execution required on the tuning laptop.
 
 ---
 
-### Phase 3: Live Telemetry Dashboard
-* **Status:** `SCHEDULED`
+## 4. Active Milestone
+
+### Phase 9: In-Vehicle Field Validation on 1980 Fairmont Platform
+* **Status:** `IN PROGRESS`
+* **Target Vehicle:** 1980 Ford Fairmont 4-Door "Boxtop" (GM 4.8L LS, Sloppy S2 Cam, VS Racing 78/75, 4L80E, 58 PSI boost-referenced fuel rail, Siemens Deka 80s).
 * **Deliverables:**
-  - High-frequency live streaming via WebSockets ($20\,\text{Hz}$).
-  - Configurable gauges with color-coded warning bands (RPM, MAP, AFR, Timing, Coolant, Voltage).
-  - Real-time connection status and signal quality indicators.
+  - [x] Preflight USB-to-CAN hardware verification with official Holley 558-443 cable.
+  - [x] Baseline dyno/street log capture and binary `.dlz` validation.
+  - [x] Zero-touch auto-pilot file watcher validation on tuning laptop.
+  - [ ] Live track pass datalog capture and transbrake launch evaluation.
+  - [ ] Long-term learn table convergence audit across multiple ambient weather conditions.
 
 ---
 
-### Phase 4: Session Recorder & High-Throughput Storage
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - SQLite WAL-mode streaming time-series storage.
-  - Metadata schema: vehicle profile, session type, weather, tune ID, notes.
-  - Chunked stream buffer guaranteeing zero frame drops during multi-hour logging.
+## 5. Future Roadmap
 
----
+### Phase 10: Multi-ECU Platform Expansion
+* Extend binary datalog parsers and CAN broadcast decoders to:
+  - Holley Dominator / HP EFI
+  - Haltech Elite / Nexus
+  - FuelTech FT550 / FT600
+  - Megasquirt / MS3Pro
 
-### Phase 5: Vehicle Baseline Engine
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - Multi-dimensional operating bins (RPM $\times$ MAP $\times$ CLT).
-  - Robust non-parametric statistics (Median, IQR, 5th/95th percentiles).
-  - Persistent baseline models across multiple driving sessions.
-
----
-
-### Phase 6: Deterministic Event Detection Engine
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - Discrete state machines: Engine Start, Stop, Idle, Cruise, Accel, Decel, WOT Pull.
-  - Anomaly event triggers: Thermal runaway, voltage sag, sensor dropout.
-  - Emits typed `EngineEvent` objects with auditable evidence payloads.
-
----
-
-### Phase 7: Rule-Based Diagnostic Engine
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - High-load fueling deviation rule (`DIAG_FUEL_HIGH_LOAD_DEV`).
-  - Idle RPM hunting rule (`DIAG_IDLE_RPM_HUNTING`).
-  - Sensor dropout & implausibility rules (`DIAG_SENSOR_DROPOUT`, `DIAG_SENSOR_IMPLAUSIBLE`).
-  - Data validity scoring per finding.
-
----
-
-### Phase 8: AI Interpretation Layer
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - Provider-agnostic LLM interface (Gemini, Claude, OpenAI, Local Ollama).
-  - Structured findings intake parser.
-  - Strictly grounded natural-language explanation and recommendation prompts.
-
----
-
-### Phase 9: "Ask Your Engine" Conversational Copilot
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - Deterministic tool registry for natural language queries.
-  - Replay session comparison via conversational prompts.
-  - Hallucination prevention guards.
-
----
-
-### Phase 10: Vehicle Profile & Modification History
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - Permanent vehicle spec sheet (engine, injectors, sensors, fuel octane).
-  - Modification timeline correlating dates with baseline telemetry shifts.
-  - Correlation vs causation linguistic safety guards.
-
----
-
-### Phase 11: Professional Report Generation
-* **Status:** `SCHEDULED`
-* **Deliverables:**
-  - Comprehensive health report builder (Overall score, Fueling, Idle, Sensors, Thermal, Electrical).
-  - Export to Markdown, HTML, and PDF formats.
-
----
-
-### Phase 12: Tune / Calibration Intelligence
-* **Status:** `FUTURE`
-* **Deliverables:**
-  - Calibration table correlation (read-only VE and Spark table cell overlay).
-  - Suggested calibration review cells (zero automatic writes).
+### Phase 11: Real-Time Audio Voice Assistant
+* Voice synthesis and voice recognition for hands-free audio telemetry coaching during dyno pulls or track staging.
