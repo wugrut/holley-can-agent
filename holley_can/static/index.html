@@ -2,478 +2,237 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Holley Terminator X Max — Live Dashboard</title>
-    <meta name="description" content="Real-time ECU monitoring dashboard for Holley Terminator X Max via CAN bus">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Holley EFI Intelligence Copilot — 1980 Fairmont Turbo LS</title>
+    <meta name="description" content="Gemini-powered EFI Calibration & Diagnostics Copilot for Holley Terminator X MAX">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=2.6">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=3.0">
 </head>
 <body>
-    <!-- Status Bar -->
-    <header id="status-bar">
-        <div class="status-left">
-            <div class="logo">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                </svg>
-                <span class="logo-text">HOLLEY CAN AGENT</span>
+    <!-- Top Header -->
+    <header class="app-header">
+        <div class="header-left">
+            <div class="app-logo">
+                <span class="logo-icon">⚡</span>
+                <div class="logo-text-group">
+                    <h1 class="logo-title">HOLLEY EFI COPILOT</h1>
+                    <span class="logo-subtitle">1980 Ford Fairmont 4.8L Turbo LS • Terminator X MAX</span>
+                </div>
             </div>
-            <button type="button" id="connection-status" class="status-pill disconnected"
-                    data-tooltip-title="ECU LINK STATUS"
-                    data-tooltip-desc="Real-time link status between this dashboard and the CAN transceiver. Click to connect or view hardware bus diagnostics.">
-                <span class="status-dot"></span>
-                <span class="status-text">DISCONNECTED</span>
-            </button>
         </div>
-        <div class="status-right">
-            <div id="ecu-info" class="ecu-info"
-                 data-tooltip-title="ECU IDENTIFIER"
-                 data-tooltip-desc="Holley EFI Terminator X Max broadcast identifier decoded from CAN frames.">ECU: —</div>
-            <div id="fps-counter" class="fps-counter"
-                 data-tooltip-title="RENDER FRAMERATE"
-                 data-tooltip-desc="Current UI refresh rate in frames per second for smooth gauge needle animation.">0 FPS</div>
-            <div id="clock" class="clock"
-                 data-tooltip-title="SYSTEM TIME"
-                 data-tooltip-desc="Synchronized system clock used for data logging timestamps."></div>
+
+        <div class="header-center">
+            <div id="gemini-status-pill" class="status-pill offline" title="Click to configure Gemini API Key">
+                <span class="status-dot"></span>
+                <span id="gemini-status-text">CHECKING AI...</span>
+            </div>
+            <button type="button" id="btn-toggle-key-panel" class="header-btn secondary-btn" title="Set Gemini API Key">
+                <span>🔑</span> <span>Gemini Key</span>
+            </button>
+            <div id="log-status-pill" class="status-pill watcher" title="Auto-watch status for Documents\Holley\Data Logs">
+                <span class="status-dot green"></span>
+                <span id="log-status-text">Auto-Watch Active</span>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <button type="button" id="btn-copy-ve-header" class="header-btn cta-btn" title="Copy 16x16 Base VE table to clipboard for Holley software (Ctrl+V)">
+                <span>📋</span> <span>COPY 16×16 VE (CTRL+V)</span>
+            </button>
+            <button type="button" id="btn-upload-datalog-trigger" class="header-btn secondary-btn" title="Upload a .dl or .dlz datalog from disk">
+                <span>📂</span> <span>Load Datalog</span>
+            </button>
+            <input type="file" id="datalog-file-input" accept=".dl,.dlz,.csv" style="display: none;">
+            <button type="button" id="btn-reset-optimizer" class="header-btn icon-btn" title="Reset accumulator cells for a fresh tuning pass">
+                <span>🗑️</span>
+            </button>
         </div>
     </header>
 
-    <!-- Controls/Settings Panel -->
-    <section id="control-panel">
-        <div class="control-group">
-            <span class="control-label">LAYOUT:</span>
-            <select id="layout-selector" class="form-control" style="width: auto; padding: 4px 8px; margin-right: 8px;"
-                    data-tooltip-title="DASHBOARD LAYOUT"
-                    data-tooltip-desc="Switch between Grid, Track, and Drag custom gauge arrangements.">
-                <!-- Populated by JS -->
-            </select>
-            <button id="btn-edit-layout" class="control-btn"
-                    data-tooltip-title="EDIT LAYOUT"
-                    data-tooltip-desc="Enable touchscreen drag-and-drop mode to reposition and customize gauge tiles.">EDIT</button>
-            <button id="btn-layout-diag" class="control-btn"
-                    data-tooltip-title="DIAGNOSTIC VIEW"
-                    data-tooltip-desc="Toggle full high-density tabular view of all raw ECU CAN broadcast channels.">DIAG</button>
+    <!-- Gemini Key Config Panel (Collapsible) -->
+    <div id="gemini-key-panel" class="key-panel hidden">
+        <div class="key-panel-inner">
+            <div class="key-panel-info">
+                <strong>Google Gemini API Key</strong>
+                <p>Saved securely in your browser's local storage. Enables multi-turn reasoning and agentic tool calling with Gemini 2.5.</p>
+            </div>
+            <div class="key-panel-form">
+                <input type="password" id="input-gemini-key" placeholder="AIzaSy..." autocomplete="off">
+                <button type="button" id="btn-save-gemini-key" class="header-btn cta-btn">Save Key</button>
+                <button type="button" id="btn-close-key-panel" class="header-btn secondary-btn">Close</button>
+            </div>
+            <div id="key-save-status" class="key-save-status"></div>
         </div>
-        
-        <div class="control-group">
-            <span class="control-label">LOGGER:</span>
-            <button id="btn-log-toggle" class="control-btn log-start"
-                    data-tooltip-title="RECORD TELEMETRY (REC)"
-                    data-tooltip-desc="Start or stop recording high-resolution time-series data to the local SQLite database.">REC</button>
-            <span id="log-status-text" class="log-status-idle"
-                  data-tooltip-title="LOGGER STATUS"
-                  data-tooltip-desc="Current state of the onboard telemetry recording engine.">IDLE</span>
-            <button id="btn-log-list" class="control-btn"
-                    data-tooltip-title="SAVED LOGS"
-                    data-tooltip-desc="Open the session log manager to browse past runs and export CSV data.">LOGS</button>
-        </div>
-        
-        <div class="control-group right-align">
-            <button id="btn-optimizer-toggle" class="control-btn copilot-btn"
-                    style="background: linear-gradient(135deg, #00e676, #00b0ff); color: #050a14; font-weight: 700;"
-                    data-tooltip-title="AI TUNE OPTIMIZER (16x16 VE + CTRL+V)"
-                    data-tooltip-desc="Open the automated 16x16 VE Table Optimizer, Post-Pull Scorecard, and 1-Click Ctrl+V Clipboard export for Terminator X.exe.">🎯 TUNE OPTIMIZER</button>
-            <button id="btn-copilot-toggle" class="control-btn copilot-btn"
-                    data-tooltip-title="AI COPILOT (ASK ENGINE)"
-                    data-tooltip-desc="Open the live telemetry-grounded AI decision-support assistant to diagnose idle, fueling, boost, or faults.">🤖 COPILOT</button>
-            <button id="btn-theme-toggle" class="control-btn circle-btn" aria-label="Toggle Day/Night Mode"
-                    data-tooltip-title="DAY / NIGHT THEME"
-                    data-tooltip-desc="Toggle between high-contrast daylight theme and dark pit mode.">🌓</button>
-            <button id="btn-voice-toggle" class="control-btn circle-btn" aria-label="Toggle Voice Alarms"
-                    data-tooltip-title="VOICE ALERTS"
-                    data-tooltip-desc="Turn spoken voice warnings on or off for critical engine alarm thresholds.">🔊</button>
-        </div>
-    </section>
-
-    <!-- Alert Banner -->
-    <div id="alert-banner" class="alert-banner hidden">
-        <div class="alert-icon">⚠</div>
-        <div id="alert-message" class="alert-message"></div>
-        <button id="alert-dismiss" class="alert-dismiss" aria-label="Dismiss alert"
-                data-tooltip-title="DISMISS ALARM"
-                data-tooltip-desc="Close this active warning alert banner.">✕</button>
     </div>
 
-    <div id="dashboard-content">
-        <!-- Grid Layout (Dynamically Populated) -->
-        <main id="gauge-grid" class="layout-section">
-            <!-- Populated by initGrid() in dashboard.js -->
-        </main>
-
-
-
-        <!-- Diagnostic Layout -->
-        <main id="diag-grid" class="layout-section hidden">
-            <div class="gauge-card diag-card">
-                <div class="gauge-header">
-                    <span class="gauge-label">DIAGNOSTIC TELEMETRY</span>
+    <!-- Main Workspace (Two-Panel Layout) -->
+    <main class="main-workspace">
+        
+        <!-- Left Panel: Gemini AI Tuner & Explanation Co-Driver -->
+        <section class="panel copilot-panel">
+            <div class="panel-header">
+                <div class="panel-title-group">
+                    <span class="panel-icon">🤖</span>
+                    <h2>AI CALIBRATION COPILOT</h2>
                 </div>
-                <div class="diag-body">
-                    <table id="diag-table">
-                        <thead>
-                            <tr>
-                                <th>Channel</th>
-                                <th>Description</th>
-                                <th>Value</th>
-                                <th>Unit</th>
-                                <th>Last Updated</th>
-                            </tr>
-                        </thead>
-                        <tbody id="diag-list">
-                            <!-- Populated dynamically by JS -->
-                        </tbody>
-                    </table>
+                <span id="copilot-model-badge" class="badge">Gemini 2.5 Flash</span>
+            </div>
+
+            <!-- Active Datalog Dropzone Banner -->
+            <div id="datalog-dropzone" class="dropzone-banner" title="Drag and drop any .dl or .dlz Holley datalog here">
+                <div class="dropzone-content">
+                    <span class="drop-icon">📥</span>
+                    <div class="drop-info">
+                        <strong id="active-log-name">Drop .dl or .dlz Datalog Here</strong>
+                        <span id="active-log-meta">or auto-ingest will pull from Documents\Holley\Data Logs</span>
+                    </div>
                 </div>
             </div>
-        </main>
-    </div>
 
-    <!-- Logs Modal -->
-    <div id="logs-modal" class="modal hidden">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Recorded Logs</h3>
-                <button id="modal-close" class="modal-close-btn"
-                        data-tooltip-title="CLOSE LOGS"
-                        data-tooltip-desc="Close the session logs modal window.">✕</button>
+            <!-- Quick Diagnostic Prompt Chips -->
+            <div class="prompt-chips-wrapper">
+                <div class="chips-label">QUICK TUNER PROMPTS</div>
+                <div class="prompt-chips" id="prompt-chips">
+                    <button type="button" class="prompt-chip" data-query="Audit my fuel pressure: is it rising 1:1 with boost to 58 PSI base?">
+                        <span>⛽</span> 1:1 Fuel Pressure Delta
+                    </button>
+                    <button type="button" class="prompt-chip" data-query="Analyze my last WOT datalog pull and check AFR safety margin">
+                        <span>📈</span> WOT Pull & AFR Safety
+                    </button>
+                    <button type="button" class="prompt-chip" data-query="Generate a 16x16 VE table correction with learn trims folded in">
+                        <span>🎯</span> 16×16 VE Trim Map
+                    </button>
+                    <button type="button" class="prompt-chip" data-query="Why is my idle hunting or surging around 900 RPM?">
+                        <span>🔍</span> Idle Stability (Cam)
+                    </button>
+                    <button type="button" class="prompt-chip" data-query="Check transbrake staging stability (3000-3200 RPM @ 0-5° BTDC)">
+                        <span>🏎️</span> Transbrake Staging
+                    </button>
+                    <button type="button" class="prompt-chip" data-query="Did the 4L80E converter slip excessively under boost?">
+                        <span>⚙️</span> 4L80E Converter Slip
+                    </button>
+                </div>
             </div>
-            <div class="modal-body">
-                <table id="sessions-table">
-                    <thead>
-                        <tr>
-                            <th>Run Name</th>
-                            <th>Start Time</th>
-                            <th>Duration</th>
-                            <th>CSV Export</th>
-                        </tr>
+
+            <!-- Chat Message Feed -->
+            <div class="chat-feed" id="chat-feed">
+                <div class="chat-msg assistant">
+                    <div class="msg-header">
+                        <span class="msg-icon">✨</span>
+                        <strong class="msg-author">GEMINI EFI INTELLIGENCE COPILOT</strong>
+                        <span class="msg-time">Ready</span>
+                    </div>
+                    <div class="msg-body">
+                        <p>Welcome! I'm your dedicated AI Calibration Co-Driver for your <strong>1980 Ford Fairmont 4.8L Turbo LS</strong> (Sloppy Stage 2 Cam, VS Racing 78/75, 4L80E, 58 PSI Boost-Referenced Fuel System).</p>
+                        <p>I analyze Holley datalogs (<code>.dl</code> / <code>.dlz</code>) and live telemetry, audit 1:1 fuel pressure tracking, calculate 16×16 VE correction tables, and explain why your engine responds the way it does.</p>
+                        <p><strong>Click any quick prompt above, ask a custom question, or drop a datalog from today's test pass!</strong></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prompt Input Form -->
+            <form id="chat-form" class="chat-form">
+                <div class="input-container">
+                    <input type="text" id="chat-input" placeholder="Ask Gemini about your tune, datalog, or engine behavior..." autocomplete="off">
+                    <button type="submit" id="btn-chat-send" class="send-btn" title="Send question to Gemini">
+                        <span>Ask</span>
+                        <span class="send-arrow">➤</span>
+                    </button>
+                </div>
+                <div class="chat-form-footer">
+                    <span class="footer-safety">🛡️ Passive Calibration Decision-Support</span>
+                    <span id="footer-engine-info">Empirically Grounded in Fairmont Specs</span>
+                </div>
+            </form>
+        </section>
+
+        <!-- Right Panel: 16×16 VE Table Optimizer & Post-Pull Inspector -->
+        <section class="panel optimizer-panel">
+            <div class="panel-header">
+                <div class="panel-title-group">
+                    <span class="panel-icon">🎯</span>
+                    <h2>16×16 FUEL VE OPTIMIZER</h2>
+                </div>
+                <div class="panel-controls">
+                    <label class="toggle-control" title="When checked, ECU Fuel Learn % and Closed-Loop Comp % are both folded into recommended Base VE. Remember to click 'Reset Learn Table' in Holley software after pasting!">
+                        <input type="checkbox" id="check-fold-learn" checked>
+                        <span>Fold Fuel Learn % into Base VE</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Post-Pull Scorecard Alert Box -->
+            <div id="scorecard-box" class="scorecard-box">
+                <div class="scorecard-header">
+                    <span class="scorecard-flag">🏁</span>
+                    <strong id="scorecard-verdict">CO-DRIVER POST-PULL VERDICT</strong>
+                    <span id="scorecard-badge" class="badge">Waiting for Pull</span>
+                </div>
+                <div id="scorecard-details" class="scorecard-details">
+                    Ready to analyze next WOT pull or loaded Holley .dl datalog...
+                </div>
+            </div>
+
+            <!-- Optimizer Stats Summary Row -->
+            <div class="optimizer-metrics-bar">
+                <div class="metric-item">
+                    <span class="metric-label">STEADY-STATE SAMPLES</span>
+                    <span id="metric-samples" class="metric-val">0</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">CELLS POPULATED</span>
+                    <span id="metric-cells" class="metric-val">0 / 256</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">LEAN CELLS (ADD FUEL)</span>
+                    <span id="metric-lean" class="metric-val green">0</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">RICH CELLS (TRIM FUEL)</span>
+                    <span id="metric-rich" class="metric-val orange">0</span>
+                </div>
+                <div class="metric-item">
+                    <span class="metric-label">LAST SOURCE</span>
+                    <span id="metric-source" class="metric-val">None</span>
+                </div>
+            </div>
+
+            <!-- 16×16 Heatmap Table Container -->
+            <div class="ve-table-wrapper">
+                <table class="ve-table" id="ve-table">
+                    <thead id="ve-thead">
+                        <!-- Populated by JS: MAP kPa columns -->
                     </thead>
-                    <tbody id="sessions-list">
-                        <!-- Populated dynamically by JS -->
+                    <tbody id="ve-tbody">
+                        <!-- Populated by JS: RPM rows -->
                     </tbody>
                 </table>
             </div>
-        </div>
-    </div>
 
-    <!-- Gauge Settings Modal -->
-    <div id="gauge-settings-modal" class="modal hidden">
-        <div class="modal-content modal-content-small">
-            <div class="modal-header">
-                <h3>Gauge Settings</h3>
-                <button id="gauge-settings-close" class="modal-close-btn"
-                        data-tooltip-title="CANCEL SETTINGS"
-                        data-tooltip-desc="Exit without saving changes.">✕</button>
-            </div>
-            <div class="modal-body form-body">
-                <input type="hidden" id="setting-gauge-index">
-                <div class="form-group">
-                    <label for="setting-channel">Telemetry Channel</label>
-                    <select id="setting-channel" class="form-control">
-                        <!-- Populated by JS -->
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="setting-type">Display Style</label>
-                    <select id="setting-type" class="form-control">
-                        <option value="arc">Arc (Full Width)</option>
-                        <option value="radial">Radial Dial</option>
-                        <option value="bar">Horizontal Bar</option>
-                        <option value="compact-value">Compact Number</option>
-                        <option value="compact-ring">Compact Progress Ring</option>
-                        <option value="track-large">Massive Text (Track Style)</option>
-                    </select>
-                </div>
-                <div class="modal-actions-grid">
-                    <button id="btn-move-left" class="action-btn secondary-btn"
-                            data-tooltip-title="SHIFT LEFT"
-                            data-tooltip-desc="Move this gauge one position earlier in the display order.">◀ Move Left</button>
-                    <button id="btn-move-right" class="action-btn secondary-btn"
-                            data-tooltip-title="SHIFT RIGHT"
-                            data-tooltip-desc="Move this gauge one position later in the display order.">Move Right ▶</button>
-                </div>
-                <div class="modal-actions">
-                    <button id="btn-delete-gauge" class="action-btn danger-btn"
-                            data-tooltip-title="DELETE GAUGE"
-                            data-tooltip-desc="Remove this tile completely from the current dashboard.">Delete Gauge</button>
-                    <button id="btn-save-gauge" class="action-btn primary-btn"
-                            data-tooltip-title="SAVE CHANGES"
-                            data-tooltip-desc="Apply the selected telemetry channel and visualization style.">Save Changes</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Connection Loss Overlay -->
-    <div id="connection-overlay" class="connection-overlay hidden">
-        <div class="overlay-content">
-            <div class="overlay-icon">⚡</div>
-            <h2>CONNECTION LOST</h2>
-            <p>CAN bus transceiver offline or ECU disconnected.</p>
-            <div class="overlay-actions" style="display: flex; gap: 10px; justify-content: center; margin-top: 18px; flex-wrap: wrap;">
-                <button type="button" id="btn-overlay-reconnect" class="action-btn primary-btn" style="min-width: 140px;">
-                    <span>⚡</span> <span>Reconnect Now</span>
-                </button>
-                <button type="button" id="btn-overlay-diag" class="action-btn secondary-btn" style="min-width: 140px;">
-                    <span>🔍</span> <span>Bus Diagnostics</span>
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- AI Copilot Side Drawer ("Ask Your Engine") -->
-    <div id="copilot-backdrop" class="copilot-backdrop hidden"></div>
-    <aside id="copilot-drawer" class="copilot-drawer hidden" aria-label="EFI Intelligence Copilot">
-        <div class="copilot-header">
-            <div class="copilot-header-title">
-                <span class="copilot-badge" id="copilot-badge">GEMINI EFI COPILOT</span>
-                <span id="copilot-engine-indicator" style="font-size: 11px; padding: 2px 7px; border-radius: 10px; background: rgba(0, 229, 255, 0.15); color: #00e5ff; font-family: 'JetBrains Mono', monospace;">Connecting...</span>
-                <button type="button" id="btn-copilot-key-settings" style="background: none; border: none; cursor: pointer; font-size: 14px; opacity: 0.8;" title="Configure Gemini API Key">🔑</button>
-            </div>
-            <button id="copilot-close" class="copilot-close-btn"
-                    data-tooltip-title="CLOSE COPILOT"
-                    data-tooltip-desc="Close the AI assistant panel.">✕</button>
-        </div>
-
-        <!-- Gemini API Key Config Bar (Collapsible) -->
-        <div id="copilot-key-panel" class="hidden" style="padding: 10px 14px; background: rgba(0, 0, 0, 0.4); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-            <div style="font-size: 11.5px; color: #a0aec0; margin-bottom: 6px;">
-                Enter Google Gemini API Key (saved in local browser storage):
-            </div>
-            <div style="display: flex; gap: 6px;">
-                <input type="password" id="input-gemini-key" placeholder="AIzaSy..." style="flex: 1; padding: 5px 8px; font-size: 11px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #fff; font-family: 'JetBrains Mono', monospace;">
-                <button type="button" id="btn-save-gemini-key" style="padding: 5px 10px; font-size: 11px; font-weight: 600; background: #00e5ff; color: #050a14; border: none; border-radius: 4px; cursor: pointer;">Save</button>
-            </div>
-            <div id="gemini-key-status" style="font-size: 10.5px; margin-top: 4px; color: #00e676;"></div>
-        </div>
-
-        <!-- Live Telemetry Snapshot Strip -->
-        <div id="copilot-context-bar" class="copilot-context-bar">
-            <div class="context-item"><span class="context-label">RPM:</span> <span id="copilot-ctx-rpm" class="context-val">—</span></div>
-            <div class="context-item"><span class="context-label">AFR:</span> <span id="copilot-ctx-afr" class="context-val">—</span></div>
-            <div class="context-item"><span class="context-label">MAP:</span> <span id="copilot-ctx-map" class="context-val">—</span></div>
-            <div class="context-item"><span class="context-label">LEARN:</span> <span id="copilot-ctx-learn" class="context-val">—</span></div>
-            <div class="context-item"><span class="context-label">CLT:</span> <span id="copilot-ctx-clt" class="context-val">—</span></div>
-        </div>
-
-        <!-- Quick Suggested Diagnostic Chips -->
-        <div class="copilot-chips-header">QUICK DIAGNOSTIC PROMPTS</div>
-        <div class="copilot-chips" id="copilot-chips">
-            <button type="button" class="copilot-chip" data-query="Audit my fuel pressure: is it rising 1:1 with boost to 58 PSI base?">⛽ 1:1 Fuel Pressure</button>
-            <button type="button" class="copilot-chip" data-query="Analyze my last WOT datalog pull and check AFR safety margin">📈 WOT Pull & AFR</button>
-            <button type="button" class="copilot-chip" data-query="Generate a 16x16 VE table correction with learn trims folded in">🎯 16×16 VE Trim Map</button>
-            <button type="button" class="copilot-chip" data-query="Why is my idle hunting or surging around 900 RPM?">🔍 Idle Stability</button>
-            <button type="button" class="copilot-chip" data-query="Check transbrake staging stability (3000-3200 RPM @ 0-5° BTDC)">🏎️ Staging & Transbrake</button>
-            <button type="button" class="copilot-chip" data-query="Did the 4L80E converter slip excessively under boost?">⚙️ 4L80E Converter</button>
-        </div>
-
-        <!-- Chat History Area -->
-        <div id="copilot-messages" class="copilot-messages">
-            <div class="copilot-msg assistant">
-                <div class="msg-author">
-                    <span class="author-icon">⚡</span>
-                    <span class="author-name">EFI INTELLIGENCE COPILOT</span>
-                    <span class="author-time">LIVE</span>
-                </div>
-                <div class="msg-content">
-                    <p>Welcome! I'm your real-time diagnostic copilot connected directly to your Terminator X MAX CAN bus.</p>
-                    <p>I analyze live sensor streams, learn tables, ignition timing, and safety thresholds to explain what your engine data means and recommend next steps.</p>
-                    <p>Click any diagnostic prompt above or ask a custom question below!</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Query Input Form -->
-        <form id="copilot-form" class="copilot-form">
-            <div class="copilot-input-wrapper">
-                <input type="text" id="copilot-input" class="copilot-input" placeholder="Ask your engine anything (e.g. 'Is my AFR safe under boost?')..." autocomplete="off">
-                <button type="submit" id="copilot-submit" class="copilot-submit-btn"
-                        data-tooltip-title="SEND QUERY"
-                        data-tooltip-desc="Send question to EFI Intelligence Copilot.">
-                    <span>ASK</span>
-                    <span class="submit-arrow">➤</span>
-                </button>
-            </div>
-            <div class="copilot-footer-note">
-                <span class="safety-indicator">🛡️ Passive Read-Only</span>
-                <span>Empirical CAN Telemetry Grounded</span>
-            </div>
-        </form>
-    </aside>
-
-    <!-- Footer Stats -->
-    <footer id="footer-stats">
-        <span id="stat-frames" data-tooltip-title="CAN FRAMES" data-tooltip-desc="Total 29-bit extended CAN packets received from Terminator X Max.">Frames: 0</span>
-        <span id="stat-channels" data-tooltip-title="ACTIVE CHANNELS" data-tooltip-desc="Number of unique telemetry signals currently streaming.">Channels: 0</span>
-        <span id="stat-errors" data-tooltip-title="BUS ERRORS" data-tooltip-desc="Total CAN bus error frames recorded.">Errors: 0</span>
-        <span id="stat-uptime" data-tooltip-title="UPTIME" data-tooltip-desc="Elapsed time since telemetry listener initialization.">Uptime: 0s</span>
-    </footer>
-
-    <!-- CAN Hardware Link & Bus Diagnostics Modal -->
-    <div id="hardware-modal" class="modal hidden" role="dialog" aria-labelledby="hw-modal-title" aria-modal="true">
-        <div class="modal-content modal-content-large">
-            <div class="modal-header">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="color: var(--accent-cyan); font-size: 18px;">⚡</span>
-                    <h3 id="hw-modal-title">CAN Hardware Link & Bus Diagnostics</h3>
-                </div>
-                <button id="hardware-modal-close" class="modal-close-btn"
-                        data-tooltip-title="CLOSE DIAGNOSTICS"
-                        data-tooltip-desc="Close hardware diagnostics modal.">✕</button>
-            </div>
-            <div class="modal-body">
-                <!-- Action Controls Banner -->
-                <div class="hw-action-bar">
-                    <button type="button" id="btn-hardware-reconnect" class="action-btn primary-btn">
-                        <span>⚡</span>
-                        <span id="hw-reconnect-label">Re-probe Bus & Connect</span>
+            <!-- VE Action Bar & Safety Notice -->
+            <div class="ve-action-bar">
+                <div class="action-buttons">
+                    <button type="button" id="btn-copy-ve-grid" class="header-btn cta-btn">
+                        📋 Copy 16×16 Base VE (Ctrl+V)
                     </button>
-                    <button type="button" id="btn-hardware-refresh" class="action-btn secondary-btn">
-                        <span>🔄</span>
-                        <span>Scan Adapters</span>
+                    <button type="button" id="btn-copy-trim-grid" class="header-btn secondary-btn">
+                        📋 Copy % Trims
                     </button>
-                    <span id="hw-probe-status" class="hw-probe-status">Ready</span>
                 </div>
-
-                <!-- Hardware Metrics Grid -->
-                <div class="hw-section-title">ACTIVE TRANSCEIVER TELEMETRY</div>
-                <div class="hw-metrics-grid">
-                    <div class="hw-metric-card">
-                        <div class="hw-metric-label">INTERFACE / DRIVER</div>
-                        <div id="hw-stat-interface" class="hw-metric-val font-mono">—</div>
-                    </div>
-                    <div class="hw-metric-card">
-                        <div class="hw-metric-label">BAUD RATE</div>
-                        <div id="hw-stat-bitrate" class="hw-metric-val font-mono">1,000,000 baud (1 Mbps)</div>
-                    </div>
-                    <div class="hw-metric-card">
-                        <div class="hw-metric-label">TRANSCEIVER STATE</div>
-                        <div id="hw-stat-state" class="hw-metric-val font-mono">STANDBY</div>
-                    </div>
-                    <div class="hw-metric-card">
-                        <div class="hw-metric-label">ECU BROADCAST ID</div>
-                        <div id="hw-stat-ecu" class="hw-metric-val font-mono">0x1A5 (Terminator X)</div>
-                    </div>
-                    <div class="hw-metric-card">
-                        <div class="hw-metric-label">FRAMES DECODED</div>
-                        <div id="hw-stat-frames" class="hw-metric-val font-mono">0</div>
-                    </div>
-                    <div class="hw-metric-card">
-                        <div class="hw-metric-label">BUS ERROR FRAMES</div>
-                        <div id="hw-stat-errors" class="hw-metric-val font-mono">0</div>
-                    </div>
-                </div>
-
-                <!-- Discovered Adapters on Host System -->
-                <div class="hw-section-title">HOST SYSTEM DETECTED CAN HARDWARE</div>
-                <div id="hw-adapters-container" class="hw-adapters-container">
-                    <div class="hw-loading">Scanning host CAN hardware interfaces...</div>
-                </div>
-
-                <!-- Holley Hardware & Connection Guide -->
-                <div class="hw-section-title">HOLLEY USB-CAN CABLE & FIELD CHECKLIST</div>
-                <div class="hw-banner-note" style="margin-bottom: 12px; padding: 10px 14px; background: rgba(0, 240, 255, 0.08); border-left: 3px solid var(--accent-cyan); border-radius: 4px; font-size: 11px; line-height: 1.5; color: var(--text-main);">
-                    💡 <strong style="color: var(--accent-cyan);">NO RESISTORS NEEDED:</strong> If your Holley software already communicates with the Terminator X using this cable, your wiring, termination, and baud rate are <strong>already 100% correct</strong>. You do NOT need to install or measure any resistors.
-                </div>
-                <div class="hw-checklist">
-                    <div class="hw-checklist-item">
-                        <div class="hw-check-step">1</div>
-                        <div class="hw-check-content">
-                            <strong>Close Holley Terminator X Tuning Software:</strong>
-                            <p>Microsoft WinUSB allows exclusive hardware access by only one program at a time. If the official Holley software is open or online, close it before connecting Copilot.</p>
-                        </div>
-                    </div>
-                    <div class="hw-checklist-item">
-                        <div class="hw-check-step">2</div>
-                        <div class="hw-check-content">
-                            <strong>Ignition Switch in RUN Position:</strong>
-                            <p>The Holley Terminator X ECU CAN transceiver only powers up when switched +12V is present in the "RUN" position. Accessory (ACC) is insufficient.</p>
-                        </div>
-                    </div>
-                    <div class="hw-checklist-item">
-                        <div class="hw-check-step">3</div>
-                        <div class="hw-check-content">
-                            <strong>Enable CAN Broadcast in Holley EFI Calibration:</strong>
-                            <p>In Holley Terminator X Software, navigate to <em>System Setup → CAN Devices</em> and verify <strong>Enable CAN Broadcast</strong> (Racepak broadcast at 1 Mbps) is turned ON, then send tune to ECU.</p>
-                        </div>
-                    </div>
-                    <div class="hw-checklist-item">
-                        <div class="hw-check-step">4</div>
-                        <div class="hw-check-content">
-                            <strong>Click [⚡ CONNECT] on Holley USB-CAN Cable:</strong>
-                            <p>In the detected adapters list above, locate <strong>Holley USB-CAN Cable (Part 558-443)</strong> and click the <strong>⚡ Connect</strong> button to immediately bind and stream live telemetry.</p>
-                        </div>
-                    </div>
+                <div class="ve-safety-notice">
+                    <span class="shield">🛡️</span>
+                    <span>Transients (|dTPS/dt| &gt; 25%/s) and cold ECT &lt; 160°F filtered out. 58 PSI Base + 1:1 Boost-Ref Protected.</span>
                 </div>
             </div>
-        </div>
-    </div>
+        </section>
 
-    <!-- AI Tune Optimizer Modal (16x16 VE Matrix + 1-Click Ctrl+V Holley Clipboard + Post-Pull Scorecard) -->
-    <div id="optimizer-modal" class="modal hidden" role="dialog" aria-labelledby="opt-modal-title" aria-modal="true">
-        <div class="modal-content modal-content-large" style="max-width: 1120px; width: 96vw;">
-            <div class="modal-header">
-                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                    <span style="color: #00e676; font-size: 18px;">🎯</span>
-                    <h3 id="opt-modal-title">AI Tune Optimizer — 16×16 Fuel VE & Post-Pull Co-Driver</h3>
-                    <span id="opt-handoff-badge" style="font-size: 11px; padding: 3px 8px; border-radius: 12px; background: rgba(0,229,255,0.12); color: #00e5ff; font-family: 'JetBrains Mono', monospace;">Auto-Watch Active</span>
-                </div>
-                <button id="optimizer-modal-close" class="modal-close-btn">✕</button>
-            </div>
-            <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
-                <!-- 1-Click Action Bar -->
-                <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;">
-                    <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-                        <button type="button" id="btn-opt-copy-ve" class="action-btn primary-btn" style="background: #00e676; color: #050a14; font-weight: 700;">
-                            📋 Copy 16×16 VE Table (Ctrl+V into Holley)
-                        </button>
-                        <button type="button" id="btn-opt-copy-corr" class="action-btn secondary-btn">
-                            📋 Copy % Trim Corrections
-                        </button>
-                        <button type="button" id="btn-opt-load-dl" class="action-btn secondary-btn">
-                            📂 Load Latest Holley Datalog (.dl/.dlz)
-                        </button>
-                        <button type="button" id="btn-opt-reset" class="action-btn secondary-btn">
-                            🗑️ Reset Pass
-                        </button>
-                        <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: #e2e8f0; cursor: pointer; margin-left: 6px;" title="When checked, both ECU Fuel Learn % and Closed-Loop Comp % are folded into the recommended Base VE table (remember to click 'Reset Learn Table' in Holley after pasting!). Uncheck if you already transferred Learn or want only Closed-Loop Comp applied.">
-                            <input type="checkbox" id="opt-include-learn" checked style="accent-color: #00e676;">
-                            <span>Fold Fuel Learn % into Base VE</span>
-                        </label>
-                    </div>
-                    <div id="opt-copy-status" style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: #00e676;">
-                        Ready — 58 PSI Base + 1:1 Boost Fuel Pressure Protected
-                    </div>
-                </div>
+    </main>
 
-                <!-- Post-Pull Scorecard Banner -->
-                <div id="opt-scorecard-box" style="padding: 10px 14px; border-radius: 6px; background: rgba(0, 229, 255, 0.07); border-left: 4px solid #00e5ff; font-size: 12px; line-height: 1.5;">
-                    <strong>🏁 CO-DRIVER POST-PULL VERDICT:</strong>
-                    <span id="opt-scorecard-text">Collecting live CAN samples or waiting for next Holley .dl datalog save...</span>
-                </div>
+    <!-- Cell Detail Tooltip Popup -->
+    <div id="cell-tooltip" class="cell-tooltip hidden"></div>
 
-                <!-- 16x16 Matrix Container -->
-                <div style="overflow-x: auto; max-height: 55vh; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px;">
-                    <table id="opt-ve-table" style="width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 10.5px; text-align: center;">
-                        <thead id="opt-ve-thead" style="position: sticky; top: 0; background: #0d1526; z-index: 2;"></thead>
-                        <tbody id="opt-ve-tbody"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Global Floating Futuristic Tooltip Overlay -->
-    <div id="custom-tooltip" class="custom-tooltip" role="tooltip" aria-hidden="true" style="display: none;">
-        <div class="tooltip-header">
-            <span class="tooltip-icon">⚡</span>
-            <span class="tooltip-title"></span>
-        </div>
-        <div class="tooltip-desc"></div>
-        <div class="tooltip-hint"></div>
-    </div>
-
-    <script src="/static/dashboard.js?v=2.6"></script>
+    <script src="/static/dashboard.js?v=3.0"></script>
 </body>
 </html>

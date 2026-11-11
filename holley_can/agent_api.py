@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 import csv
 import io
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -492,6 +492,35 @@ def create_app(
             return {"status": "success", "matrix": matrix}
         except Exception as e:
             logger.error("Optimizer datalog ingest error: %s", e)
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/datalog/upload")
+    async def upload_datalog(file: UploadFile = File(...)):
+        """Uploads and analyzes a Holley .dl / .dlz datalog directly from the browser."""
+        import os
+        upload_dir = Path("./data/uploads")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = upload_dir / file.filename
+        content = await file.read()
+        with open(dest_path, "wb") as f:
+            f.write(content)
+
+        try:
+            from .dl_parser import HolleyDatalogParser
+            parser = HolleyDatalogParser(str(dest_path))
+            summary = parser.summarize()
+            handoff_watcher._ingest_file(str(dest_path))
+            matrix = ve_optimizer.get_matrix_payload()
+            matrix["scorecards"] = pull_detector.recent_scorecards
+            return {
+                "status": "success",
+                "filename": file.filename,
+                "path": str(dest_path),
+                "summary": summary,
+                "matrix": matrix,
+            }
+        except Exception as e:
+            logger.error("Failed to process uploaded datalog: %s", e)
             return {"status": "error", "message": str(e)}
 
     @app.post("/api/optimizer/reset")
