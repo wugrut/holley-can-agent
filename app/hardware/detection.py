@@ -107,7 +107,11 @@ def discover_available_adapters() -> List[Dict[str, Any]]:
         ports = serial.tools.list_ports.comports()
         for p in ports:
             desc = p.description or ""
-            is_can_device = any(keyword in desc.lower() for keyword in ["canable", "candlelight", "slcan", "can"])
+            lower_desc = desc.lower()
+            # Explicitly reject Intel AMT / motherboard management serial ports (e.g. SOL, AMT, LMS)
+            if "management" in lower_desc or "amt" in lower_desc or "sol" in lower_desc:
+                continue
+            is_can_device = any(keyword in lower_desc for keyword in ["canable", "candlelight", "slcan", "can adapter"])
             adapters.append({
                 "adapter_type": "slcan",
                 "name": f"SLCAN / Serial ({p.device} - {desc})",

@@ -171,7 +171,39 @@ def create_app(
                     "Could not auto-start CAN listener on boot: %s. Auto-Handoff Watcher active.", e
                 )
         await handoff_watcher.start()
+
+        # Start periodic WebSocket heartbeat task (1 Hz) to prevent watchdog timeout on idle bus
+        async def _heartbeat_loop():
+            while True:
+                try:
+                    await asyncio.sleep(1.0)
+                    if broadcaster.connections:
+                        hb_msg = json.dumps({
+                            "type": "heartbeat",
+                            "stats": listener.stats,
+                            "ecu_serial": listener.ecu_serial,
+                            "timestamp": time.time(),
+                        })
+                        dead = []
+                        for ws in list(broadcaster.connections):
+                            try:
+                                await ws.send_text(hb_msg)
+                            except Exception:
+                                dead.append(ws)
+                        for ws in dead:
+                            broadcaster.disconnect(ws)
+                except asyncio.CancelledError:
+                    break
+                except Exception as hb_err:
+                    logger.debug("Heartbeat error: %s", hb_err)
+
+        heartbeat_task = asyncio.create_task(_heartbeat_loop())
         yield
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
         await handoff_watcher.stop()
         if getattr(listener, "_running", False):
             try:

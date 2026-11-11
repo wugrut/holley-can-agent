@@ -14,7 +14,7 @@ const CONFIG = {
     renderFps: 30,
     rpmRedline: 6200,
     rpmMax: 7000,
-    watchdogTimeoutMs: 1500,    // Show connection overlay if no WS msg in 1.5s
+    watchdogTimeoutMs: 3500,    // Show connection overlay if no WS msg in 3.5s
 };
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -186,6 +186,13 @@ function handleMessage(msg) {
             break;
 
         case 'pong':
+            break;
+
+        case 'heartbeat':
+            if (msg.stats) {
+                state.stats = msg.stats;
+                updateLiveHardwareStats(msg.stats);
+            }
             break;
     }
 }
