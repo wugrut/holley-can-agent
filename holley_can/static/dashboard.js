@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initDropzone();
     initWebSocket();
     checkCopilotStatus();
+    updateWatcherStatus();
 });
 
 // ─── Gemini Key Panel ───────────────────────────────────────────────────────
@@ -111,6 +112,27 @@ async function checkCopilotStatus() {
             pill.className = 'status-pill offline';
             pillText.textContent = '🛡️ OFFLINE ENGINE';
         }
+    }
+}
+
+async function updateWatcherStatus() {
+    const textEl = document.getElementById('log-status-text');
+    const pill = document.getElementById('log-status-pill');
+    try {
+        const res = await fetch('/api/datalogs/discover');
+        const data = await res.json();
+        const dlCount = (data.datalogs || []).length;
+        const tuneCount = (data.tunes || []).length;
+        const roots = data.watched_roots || [];
+
+        if (textEl) {
+            textEl.textContent = `Auto-Watching (${dlCount} logs, ${tuneCount} tunes)`;
+        }
+        if (pill) {
+            pill.title = `Actively watching on this machine:\n${roots.join('\n')}`;
+        }
+    } catch (e) {
+        if (textEl) textEl.textContent = 'Auto-Watch Active';
     }
 }
 

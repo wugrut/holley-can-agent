@@ -414,28 +414,38 @@ class HolleyDatalogParser:
         return frames
 
 
-def discover_local_holley_files(extra_dirs: Optional[List[str | Path]] = None) -> Dict[str, List[Dict[str, Any]]]:
+def discover_local_holley_files(extra_dirs: Optional[List[str | Path]] = None) -> Dict[str, Any]:
     """
-    Scan standard Windows Holley Terminator X V3 directories, Google Drive,
+    Scan standard Windows Holley Terminator X directories, Google Drive,
     and removable drives for .dl, .dlz, .terx, .hefi, and .gcfgx files.
+    Dynamically adapts to whatever user account/laptop executes the code.
     """
     home = Path.home()
+    userprofile = Path(os.environ.get("USERPROFILE", str(home)))
+
     search_roots: List[Path] = [
+        # Standard user Documents & OneDrive paths (dynamically resolved on laptop)
+        userprofile / "OneDrive" / "Documents" / "Holley",
+        userprofile / "Documents" / "Holley",
         home / "OneDrive" / "Documents" / "Holley",
         home / "Documents" / "Holley",
-        Path("G:/My Drive/Holley"),
+        # Current execution directory & data folder
+        Path.cwd(),
+        Path.cwd() / "data",
+        Path.cwd() / "data" / "uploads",
         Path("./data"),
         Path("./data/uploads"),
     ]
 
-    # Check removable drive letters (D:, E:, F:, G:) for Holley SD cards
+    # Search for Google Drive / My Drive across all common drive letters
     if os.name == "nt":
-        for letter in ["D", "E", "F", "G", "H"]:
+        for letter in ["C", "D", "E", "F", "G", "H"]:
             drive = Path(f"{letter}:/")
             if drive.exists():
-                holley_sub = drive / "Holley"
-                if holley_sub.exists():
-                    search_roots.append(holley_sub)
+                for sub in ["My Drive/Holley", "Google Drive/Holley", "Holley"]:
+                    candidate = drive / sub
+                    if candidate.exists():
+                        search_roots.append(candidate)
 
     if extra_dirs:
         for d in extra_dirs:
@@ -443,46 +453,58 @@ def discover_local_holley_files(extra_dirs: Optional[List[str | Path]] = None) -
             if p.exists():
                 search_roots.append(p)
 
+    # Deduplicate search roots preserving order
+    valid_roots: List[Path] = []
+    seen_roots: set[str] = set()
+    for r in search_roots:
+        if r.exists():
+            resolved = str(r.resolve())
+            if resolved not in seen_roots:
+                seen_roots.add(resolved)
+                valid_roots.append(r)
+
     datalogs: List[Dict[str, Any]] = []
     tunes: List[Dict[str, Any]] = []
-    seen: set[str] = set()
+    seen_files: set[str] = set()
 
     tune_extensions = (".terx", ".hefi", ".gcfgx")
 
-    for root in search_roots:
-        if not root.exists():
-            continue
-        for dirpath, _, filenames in os.walk(root):
-            for fn in filenames:
-                ext = os.path.splitext(fn)[1].lower()
-                if ext not in (".dl", ".dlz", *tune_extensions):
-                    continue
-                full_path = Path(dirpath) / fn
-                norm = str(full_path.resolve())
-                if norm in seen:
-                    continue
-                seen.add(norm)
-                try:
-                    stat = full_path.stat()
-                    entry = {
-                        "name": fn,
-                        "path": norm,
-                        "size_bytes": stat.st_size,
-                        "modified": stat.st_mtime,
-                        "folder": Path(dirpath).name,
-                        "type": "tune" if ext in tune_extensions else "datalog",
-                    }
-                    if ext in (".dl", ".dlz"):
-                        datalogs.append(entry)
-                    elif ext in tune_extensions:
-                        tunes.append(entry)
-                except OSError:
-                    pass
+    for root in valid_roots:
+        try:
+            for dirpath, _, filenames in os.walk(root):
+                for fn in filenames:
+                    ext = os.path.splitext(fn)[1].lower()
+                    if ext not in (".dl", ".dlz", *tune_extensions):
+                        continue
+                    full_path = Path(dirpath) / fn
+                    norm = str(full_path.resolve())
+                    if norm in seen_files:
+                        continue
+                    seen_files.add(norm)
+                    try:
+                        stat = full_path.stat()
+                        entry = {
+                            "name": fn,
+                            "path": norm,
+                            "size_bytes": stat.st_size,
+                            "modified": stat.st_mtime,
+                            "folder": Path(dirpath).name,
+                            "type": "tune" if ext in tune_extensions else "datalog",
+                        }
+                        if ext in (".dl", ".dlz"):
+                            datalogs.append(entry)
+                        elif ext in tune_extensions:
+                            tunes.append(entry)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
 
     datalogs.sort(key=lambda x: x["modified"], reverse=True)
     tunes.sort(key=lambda x: x["modified"], reverse=True)
     return {
         "datalogs": datalogs,
         "tunes": tunes,
+        "watched_roots": [str(r.resolve()) for r in valid_roots],
     }
 
