@@ -10,15 +10,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import struct
 import sys
-import os
 import threading
 import time
+import zlib
 from typing import List, NamedTuple, Optional
 
 from app.can.frame import RawCANFrame
 from app.hardware.interface import ConnectionState, ConnectionStatus, HardwareInterface
+from holley_can.dl_parser import (
+    V3_SLOT_TO_CHANNEL,
+    _byte_swap_4,
+    _rle_decompress,
+    decompress_dlz,
+)
+from holley_can.protocol import (
+    CHANNEL_BY_NAME,
+    build_can_id,
+    is_ecu_announcement,
+)
 
 logger = logging.getLogger("efi.hardware.holley_usbcan")
 
@@ -30,6 +42,14 @@ HOLLEY_USBCAN_GUID_STR = "{abe07f2b-a951-4941-94a4-52adaa1fa53e}"
 USBC_MAGIC: bytes = b"USBC"  # 0x55, 0x53, 0x42, 0x43
 PACKET_SIZE: int = 20        # 4 header + 4 can_id + 1 dlc + 3 pad + 8 payload
 BAUD_1M: int = 1_000_000     # 1 Mbps default for Holley HEFI CAN bus
+
+# Terminator X.exe CAN Bus 1 RPC / Live Monitor Constants
+# Verified from Terminator X.exe (0x3c11e6, 0x3c1780, 0x3c1860, 0x3048bb, 0x313040):
+RPC_MAGIC: bytes = b"\x22\x37\x49\xf2"  # 0xF2493722 LE magic at 0x946560
+PC_NODE_SERIAL: int = 0x0123            # Default 11-bit PC node serial in Terminator X.exe
+CMD_MONITOR_RAW: int = 0x41             # Uncompressed 2512-byte .dl monitor record
+CMD_MONITOR_RLE: int = 0x44             # RLE-compressed 2512-byte .dl monitor record
+V3_MONITOR_RECORD_SIZE: int = 0x09D0    # 2512 bytes (314 * 8-byte slots)
 
 # Win32 & WinUSB Constants
 GENERIC_READ = 0x80000000
@@ -363,6 +383,148 @@ def parse_holley_can_packet(packet: bytes) -> Optional[ParsedHolleyPacket]:
         return None
 
 
+def build_usbc_packet(
+    can_id: int, dlc: int, payload: bytes = b"", is_extended: bool = True
+) -> bytes:
+    """
+    Build a 20-byte Holley USBC Bulk OUT packet matching CUsbCanDriver::SendFrame
+    (USBCAN-Driver.dll at 0x10003ab0).
+    """
+    dlc = max(0, min(8, int(dlc)))
+    padded_payload = (payload[:dlc]).ljust(8, b"\x00")
+    if is_extended:
+        raw_id_word = ((can_id & 0x1FFFFFFF) << 3) | 0x04
+    else:
+        raw_id_word = (can_id & 0x7FF) << 21
+    return struct.pack(
+        "<4sIB3s8s", USBC_MAGIC, raw_id_word, dlc, b"\x00\x00\x00", padded_payload
+    )
+
+
+def build_holley_node_announcement_packet(pc_serial: int = PC_NODE_SERIAL) -> bytes:
+    """
+    Build the 20-byte USBC packet for the PC node announcement on CAN Bus 1:
+      CAN_ID = 0x0E002800 | (pc_serial & 0x7FF)  (e.g. 0x0E002923, DLC = 0)
+    Verified from Terminator X.exe at 0x3c1780 (called upon receiving 0x0E001556).
+    """
+    can_id = 0x0E002800 | (pc_serial & 0x7FF)
+    return build_usbc_packet(can_id, dlc=0, is_extended=True)
+
+
+def build_holley_ecu_claim_packet(
+    ecu_serial: int, pc_serial: int = PC_NODE_SERIAL
+) -> bytes:
+    """
+    Build the 20-byte USBC packet to link/claim the ECU on CAN Bus 1:
+      CAN_ID = 0x0E01A800 | (pc_serial & 0x7FF)  (e.g. 0x0E01A923, DLC = 4)
+      Payload = [0x00, 0x02, (ecu_serial >> 8) & 0xFF, ecu_serial & 0xFF]
+    Verified from Terminator X.exe at 0x3c1860.
+    """
+    can_id = 0x0E01A800 | (pc_serial & 0x7FF)
+    payload = struct.pack(">BBH", 0x00, 0x02, ecu_serial & 0xFFFF)
+    return build_usbc_packet(can_id, dlc=4, payload=payload, is_extended=True)
+
+
+def build_holley_monitor_poll_packets(
+    ecu_serial: int,
+    pc_serial: int = PC_NODE_SERIAL,
+    cmd: int = CMD_MONITOR_RLE,
+    record_size: int = V3_MONITOR_RECORD_SIZE,
+) -> bytes:
+    """
+    Build the 5-frame (100-byte) USBC Bulk OUT sequence for polling a live
+    read-only monitor sample record (cmd 0x44 RLE or cmd 0x41 raw, 0x09D0 bytes)
+    from a Terminator X / X MAX ECU over CAN Bus 1 (558-443 USB-to-CAN cable).
+
+    Verified from Terminator X.exe at 0x304810 -> 0x313040:
+      - CAN_ID = 0x14002800 | ((ecu_serial & 0x7FF) << 14) | (pc_serial & 0x7FF)
+      - 24-byte RPC message:
+          [0..3]   = RPC_MAGIC (b"\\x22\\x37\\x49\\xf2")
+          [4..19]  = struct.pack(">4I", cmd, 0, 0, record_size)
+          [20..23] = struct.pack(">I", crc32(bytes[4..19]))
+      - Transmitted as 5 CAN frames:
+          Frame 0 (DLC=8): [00 00 00 18 22 37 49 F2]
+          Frame 1 (DLC=8): [00 00 00 44 00 00 00 00]
+          Frame 2 (DLC=8): [00 00 00 00 00 00 09 D0]
+          Frame 3 (DLC=4): [CRC32_BE (4 bytes)]
+          Frame 4 (DLC=0): [] (end-of-transfer marker)
+    """
+    can_id = 0x14002800 | ((ecu_serial & 0x7FF) << 14) | (pc_serial & 0x7FF)
+    header_be = struct.pack(">4I", cmd, 0, 0, record_size)
+    crc = zlib.crc32(header_be) & 0xFFFFFFFF
+    rpc_buf = RPC_MAGIC + header_be + struct.pack(">I", crc)
+
+    out = bytearray()
+    # Frame 0: 4-byte BE total length + 4-byte RPC_MAGIC
+    out.extend(
+        build_usbc_packet(
+            can_id, dlc=8, payload=struct.pack(">I", len(rpc_buf)) + RPC_MAGIC
+        )
+    )
+    # Frames 1..3: chunks of rpc_buf[4:]
+    offset = 4
+    while offset < len(rpc_buf):
+        chunk = rpc_buf[offset : offset + 8]
+        out.extend(build_usbc_packet(can_id, dlc=len(chunk), payload=chunk))
+        offset += len(chunk)
+    # Frame 4: DLC=0 end-of-transfer frame
+    out.extend(build_usbc_packet(can_id, dlc=0))
+    return bytes(out)
+
+
+def decode_holley_rpc_monitor_payload(rpc_bytes: bytes) -> Optional[bytes]:
+    """
+    Decode a reassembled Holley 0xF2493722 RPC monitor response (cmd 0x44 RLE or
+    cmd 0x41 raw) into a standard 2512-byte little-endian Terminator X V3 .dl row.
+
+    Verified from Terminator X.exe at 0x30a380, 0x30b85b (cmd 0x41), and
+    0x30bb7a..0x30bfe8 (cmd 0x44 RLE decompression + 4-byte endian swap).
+    """
+    if len(rpc_bytes) < 24 or rpc_bytes[:4] != RPC_MAGIC:
+        return None
+
+    cmd, _offset, status, data_len = struct.unpack_from(">4I", rpc_bytes, 4)
+    if status != 0 or cmd not in (CMD_MONITOR_RAW, CMD_MONITOR_RLE):
+        return None
+
+    if len(rpc_bytes) < 20 + data_len:
+        return None
+
+    # Verify trailing CRC32 if present
+    if len(rpc_bytes) >= 24 + data_len:
+        expected_crc = struct.unpack_from(">I", rpc_bytes, 20 + data_len)[0]
+        actual_crc = zlib.crc32(rpc_bytes[4 : 20 + data_len]) & 0xFFFFFFFF
+        if expected_crc != actual_crc:
+            logger.debug(
+                "Holley RPC monitor CRC mismatch: expected=0x%08X actual=0x%08X",
+                expected_crc,
+                actual_crc,
+            )
+            return None
+
+    payload = rpc_bytes[20 : 20 + data_len]
+
+    if cmd == CMD_MONITOR_RAW:
+        if len(payload) < V3_MONITOR_RECORD_SIZE:
+            return None
+        return _byte_swap_4(payload[:V3_MONITOR_RECORD_SIZE])
+
+    # cmd == 0x44 (RLE-compressed 2512-byte .dl row, big-endian floats)
+    decompressed = _rle_decompress(payload)
+    if len(decompressed) >= V3_MONITOR_RECORD_SIZE:
+        return _byte_swap_4(decompressed[:V3_MONITOR_RECORD_SIZE])
+
+    # Fallback in case payload was 4-byte swapped prior to RLE
+    try:
+        alt = decompress_dlz(payload)
+        if len(alt) >= V3_MONITOR_RECORD_SIZE:
+            return alt[:V3_MONITOR_RECORD_SIZE]
+    except Exception:
+        pass
+    return None
+
+
+
 
 class HolleyUsbCanAdapter(HardwareInterface):
     """
@@ -375,10 +537,16 @@ class HolleyUsbCanAdapter(HardwareInterface):
         device_index: int = 0,
         bitrate: int = BAUD_1M,
         channel: str = "HOLLEY_USBCAN_0",
+        auto_monitor_poll: Optional[bool] = None,
     ) -> None:
         self.device_index = device_index
         self.bitrate = bitrate
         self.channel = channel
+        if auto_monitor_poll is None:
+            env_poll = os.environ.get("HOLLEY_AUTO_MONITOR_POLL", "1").strip().lower()
+            self.auto_monitor_poll = env_poll not in ("0", "false", "no", "off")
+        else:
+            self.auto_monitor_poll = bool(auto_monitor_poll)
 
         self._status = ConnectionStatus(
             state=ConnectionState.DISCONNECTED,
@@ -401,6 +569,18 @@ class HolleyUsbCanAdapter(HardwareInterface):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stream_buffer = bytearray()
         self._debug_raw_packets = os.environ.get("HOLLEY_DEBUG_RAW_PACKETS", "").strip() in ("1", "true", "TRUE")
+
+        # CAN Bus 1 ECU announcement & Terminator X.exe cmd 0x44 monitor stream state
+        self._ecu_serial: Optional[int] = None
+        self._ecu_claimed: bool = False
+        self._last_broadcast_time: float = 0.0
+        self._last_poll_time: float = 0.0
+        self._rpc_active: bool = False
+        self._rpc_can_id: Optional[int] = None
+        self._rpc_remaining: int = 0
+        self._rpc_buf = bytearray()
+        self._write_lock = threading.Lock()
+        self._monitor_records_decoded: int = 0
 
     def is_connected(self) -> bool:
         return (
@@ -549,6 +729,9 @@ class HolleyUsbCanAdapter(HardwareInterface):
         winusb.WinUsb_SetPipePolicy(h_winusb, self._in_pipe_id, RAW_IO, 1, ctypes.byref(true_val))
         winusb.WinUsb_SetPipePolicy(h_winusb, self._in_pipe_id, PIPE_TRANSFER_TIMEOUT, 4, ctypes.byref(timeout_ms))
 
+        if self._out_pipe_id is not None:
+            winusb.WinUsb_SetPipePolicy(h_winusb, self._out_pipe_id, PIPE_TRANSFER_TIMEOUT, 4, ctypes.byref(timeout_ms))
+
         # 6. Configure CAN Bitrate via Control Transfer (matching CUsbCanDriver::SetSpeed at RVA 0x3350)
         # Setup Packet: RequestType=0x22 (Class/Endpoint), Request=0x02 (SetSpeed), Value=0x0000, Length=4
         setup = WINUSB_SETUP_PACKET(
@@ -635,13 +818,189 @@ class HolleyUsbCanAdapter(HardwareInterface):
                         self._status.error_message = "USB cable was unplugged."
                         break
                     elif err == 121:  # Semaphore timeout (normal idle on quiet bus)
+                        self._maybe_poll_ecu_monitor()
                         continue
                     else:
                         # Brief sleep to avoid spinning on unexpected transient error
                         time.sleep(0.01)
+                self._maybe_poll_ecu_monitor()
         finally:
             self._status.reader_alive = False
             logger.debug("HolleyUsbCan reader worker exiting.")
+
+    def _write_usbc_bytes(self, data: bytes) -> bool:
+        """Write raw 20-byte-aligned USBC packets to the Bulk OUT pipe."""
+        if not self._h_winusb or self._out_pipe_id is None or sys.platform != "win32":
+            return False
+        with self._write_lock:
+            try:
+                # Send each 20-byte USBC packet via WinUsb_WritePipe (matching CUsbCanDriver::SendFrame)
+                for offset in range(0, len(data), PACKET_SIZE):
+                    pkt = data[offset : offset + PACKET_SIZE]
+                    if len(pkt) != PACKET_SIZE:
+                        continue
+                    buf = ctypes.create_string_buffer(pkt, PACKET_SIZE)
+                    transferred = wintypes.DWORD(0)
+                    ok = winusb.WinUsb_WritePipe(
+                        self._h_winusb,
+                        self._out_pipe_id,
+                        buf,
+                        PACKET_SIZE,
+                        ctypes.byref(transferred),
+                        None,
+                    )
+                    if not ok or transferred.value != PACKET_SIZE:
+                        return False
+                return True
+            except Exception as exc:
+                logger.debug("WinUsb_WritePipe error: %s", exc)
+                return False
+
+    def _maybe_poll_ecu_monitor(self, force: bool = False) -> bool:
+        """
+        If connected to CAN Bus 1 where the ECU is sending 0x0E001xxx announcements
+        without 0x1E... broadcast frames, poll the read-only live monitor record
+        (cmd 0x44, 0x09D0 bytes) matching Terminator X.exe.
+        """
+        if not self.auto_monitor_poll or self._ecu_serial is None:
+            return False
+        now = time.time()
+        # Do not poll if native 0x1E... broadcast frames are actively streaming
+        if (now - self._last_broadcast_time) <= 0.5:
+            return False
+        if not force and (now - self._last_poll_time) < 0.18:
+            return False
+
+        self._last_poll_time = now
+        poll_packets = build_holley_monitor_poll_packets(
+            ecu_serial=self._ecu_serial,
+            pc_serial=PC_NODE_SERIAL,
+            cmd=CMD_MONITOR_RLE,
+            record_size=V3_MONITOR_RECORD_SIZE,
+        )
+        return self._write_usbc_bytes(poll_packets)
+
+    def _handle_ecu_announcement(self, can_id: int) -> None:
+        """
+        Handle a Terminator X ECU announcement frame (e.g. 0x0E001556) on CAN Bus 1:
+          1. Record the 11-bit ECU serial number.
+          2. Send the PC node announcement (0x0E002923, DLC=0) matching Terminator X.exe (0x3c1780).
+          3. Send the ECU link/claim frame (0x0E01A923, DLC=4) once on initial discovery.
+          4. Trigger a read-only cmd 0x44 monitor poll if no 0x1E... broadcasts are active.
+        """
+        ecu_ser = can_id & 0x7FF
+        if self._ecu_serial != ecu_ser:
+            self._ecu_serial = ecu_ser
+            self._ecu_claimed = False
+            logger.info(
+                "HolleyUsbCanAdapter detected ECU announcement 0x%08X (ECU Serial 0x%03X / %d)",
+                can_id,
+                ecu_ser,
+                ecu_ser,
+            )
+
+        if not self.auto_monitor_poll:
+            return
+
+        now = time.time()
+        if (now - self._last_broadcast_time) <= 0.5:
+            return
+
+        out_bytes = bytearray(build_holley_node_announcement_packet(PC_NODE_SERIAL))
+        if not self._ecu_claimed:
+            out_bytes.extend(build_holley_ecu_claim_packet(ecu_ser, PC_NODE_SERIAL))
+            self._ecu_claimed = True
+        self._write_usbc_bytes(bytes(out_bytes))
+        self._maybe_poll_ecu_monitor()
+
+    def _handle_rpc_response_frame(
+        self, can_id: int, dlc: int, payload: bytes, timestamp: float
+    ) -> bool:
+        """
+        Reassemble multi-frame 0xF2493722 RPC responses from the ECU on CAN Bus 1
+        (matching Terminator X.exe at 0x3c13c0..0x3c15c0).
+
+        Returns True if the frame was consumed as part of an RPC transfer.
+        """
+        if not self._rpc_active:
+            if dlc == 8 and payload[4:8] == RPC_MAGIC:
+                total_len = struct.unpack_from(">I", payload, 0)[0]
+                if 20 <= total_len <= 8192:
+                    self._rpc_active = True
+                    self._rpc_can_id = can_id
+                    self._rpc_remaining = total_len - 4
+                    self._rpc_buf = bytearray(RPC_MAGIC)
+                    return True
+            # Consume any stray non-broadcast frame addressed to our PC_NODE_SERIAL (0x0123)
+            return ((can_id >> 14) & 0x7FF) == PC_NODE_SERIAL
+
+        # If another unrelated frame arrives while RPC is active, only consume frames matching RPC stream
+        if self._rpc_can_id is not None and can_id != self._rpc_can_id:
+            # Allow restart if a fresh RPC header arrives
+            if dlc == 8 and payload[4:8] == RPC_MAGIC:
+                total_len = struct.unpack_from(">I", payload, 0)[0]
+                if 20 <= total_len <= 8192:
+                    self._rpc_can_id = can_id
+                    self._rpc_remaining = total_len - 4
+                    self._rpc_buf = bytearray(RPC_MAGIC)
+                    return True
+            return False
+
+        if dlc > 0 and self._rpc_remaining > 0:
+            take = min(dlc, self._rpc_remaining)
+            self._rpc_buf.extend(payload[:take])
+            self._rpc_remaining -= take
+
+        if dlc == 0 or self._rpc_remaining == 0:
+            if self._rpc_remaining == 0 and len(self._rpc_buf) >= 24:
+                rpc_bytes = bytes(self._rpc_buf)
+                self._rpc_buf.clear()
+                dl_row = decode_holley_rpc_monitor_payload(rpc_bytes)
+                if dl_row is not None:
+                    self._monitor_records_decoded += 1
+                    self._emit_dl_row_as_can_frames(dl_row, timestamp)
+            if dlc == 0:
+                self._rpc_active = False
+                self._rpc_can_id = None
+                # Immediately poll the next monitor frame (matching Terminator X.exe 0x308bec)
+                self._maybe_poll_ecu_monitor(force=True)
+
+        return True
+
+    def _emit_dl_row_as_can_frames(self, dl_row: bytes, timestamp: float) -> None:
+        """
+        Convert a decoded 2512-byte Terminator X V3 monitor sample record into
+        standard 29-bit HEFI broadcast RawCANFrames for all mapped channels.
+        """
+        ecu_ser = self._ecu_serial if self._ecu_serial is not None else 0x556
+        for slot_idx, ch_name in V3_SLOT_TO_CHANNEL.items():
+            offset = slot_idx * 8
+            if offset + 8 > len(dl_row):
+                continue
+            val_f, status_u32 = struct.unpack_from("<fI", dl_row, offset)
+            ch_def = CHANNEL_BY_NAME.get(ch_name)
+            if ch_def is None:
+                continue
+            can_id = build_can_id(channel_index=ch_def.index, ecu_serial=ecu_ser)
+            payload = struct.pack(">ff", val_f, float(status_u32))
+            frame = RawCANFrame(
+                timestamp=timestamp,
+                arbitration_id=can_id,
+                data=payload,
+                dlc=8,
+                channel=self.channel,
+                is_extended_id=True,
+                is_error_frame=False,
+            )
+            self._status.frames_received += 1
+            self._status.last_frame_time = timestamp
+            if self._queue is not None and self._loop is not None:
+                try:
+                    self._loop.call_soon_threadsafe(self._enqueue_frame, frame)
+                except RuntimeError:
+                    pass
+            elif self._queue is not None:
+                self._enqueue_frame(frame)
 
     def _process_stream_chunk(self, chunk: bytes) -> None:
         """Appends chunk to buffer, synchronizes to USBC magic, and dispatches frames."""
@@ -680,6 +1039,7 @@ class HolleyUsbCanAdapter(HardwareInterface):
                 dlc = parsed.dlc
                 payload = parsed.payload
                 is_extended = parsed.is_extended
+                now = time.time()
 
                 if self._debug_raw_packets:
                     logger.info(
@@ -690,9 +1050,21 @@ class HolleyUsbCanAdapter(HardwareInterface):
                         " ".join(f"{b:02X}" for b in payload),
                     )
 
+                # 1. Check if this is part of a multi-frame 0xF2493722 RPC monitor response from the ECU
+                if is_extended and (can_id & 0x10000000) != 0 and (can_id & 0x1E000000) != 0x1E000000:
+                    if self._handle_rpc_response_frame(can_id, dlc, payload, now):
+                        continue
+
+                # 2. Track native 0x1E... broadcast traffic or handle 0x0E001xxx ECU announcement
+                if is_extended:
+                    if (can_id & 0x1E000000) == 0x1E000000 and dlc == 8:
+                        self._last_broadcast_time = now
+                    elif is_ecu_announcement(can_id):
+                        self._handle_ecu_announcement(can_id)
+
                 try:
                     frame = RawCANFrame(
-                        timestamp=time.time(),
+                        timestamp=now,
                         arbitration_id=can_id,
                         data=payload,
                         dlc=dlc,
@@ -708,6 +1080,8 @@ class HolleyUsbCanAdapter(HardwareInterface):
                             self._loop.call_soon_threadsafe(self._enqueue_frame, frame)
                         except RuntimeError:
                             pass
+                    elif self._queue is not None:
+                        self._enqueue_frame(frame)
                 except Exception as frame_err:
                     logger.warning("Error creating RawCANFrame: %s", frame_err)
                     self._status.malformed_packets += 1

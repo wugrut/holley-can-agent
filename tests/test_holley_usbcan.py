@@ -17,9 +17,18 @@ from app.can.frame import RawCANFrame
 from app.events.detector import EventDetector
 from app.hardware.detection import discover_available_adapters
 from app.hardware.holley_usbcan import (
+    CMD_MONITOR_RLE,
     PACKET_SIZE,
+    PC_NODE_SERIAL,
+    RPC_MAGIC,
     USBC_MAGIC,
+    V3_MONITOR_RECORD_SIZE,
     HolleyUsbCanAdapter,
+    build_holley_ecu_claim_packet,
+    build_holley_monitor_poll_packets,
+    build_holley_node_announcement_packet,
+    build_usbc_packet,
+    decode_holley_rpc_monitor_payload,
     parse_holley_can_packet,
 )
 from app.hardware.interface import ConnectionState
@@ -376,3 +385,109 @@ class TestHolleyUsbCanIntegrationPipeline:
         assert db_file.exists()
 
         loop.close()
+
+    def test_can_bus_1_handshake_and_cmd_0x44_rle_monitor_stream(self) -> None:
+        """
+        Verifies that when only 0x0E001556 ECU announcements are present on CAN Bus 1
+        (558-443 USB cable without a 3.5" Handheld broadcasting 0x1E... frames):
+          1. HolleyUsbCanAdapter detects ECU serial 0x556 from 0x0E001556
+          2. Sends PC node announcement (0x0E002923), ECU claim (0x0E01A923),
+             and 5-frame cmd 0x44 monitor poll (0x1555A923)
+          3. Reassembles the ECU's multi-frame 0xF2493722 RLE response, decompresses
+             the 2512-byte .dl row, and emits standard 0x1E... RawCANFrames for live gauges.
+        """
+        import zlib
+        from holley_can.dl_parser import _byte_swap_4
+
+        written_packets: list[bytes] = []
+        adapter = HolleyUsbCanAdapter(auto_monitor_poll=True)
+        adapter._status.state = ConnectionState.CONNECTED
+        adapter._h_winusb = 12345
+        adapter._queue = asyncio.Queue()
+        adapter._write_usbc_bytes = lambda data: (written_packets.append(data) or True)  # type: ignore[assignment]
+
+        # 1. Feed ECU announcement 0x0E001556
+        ann_pkt = build_usbc_packet(0x0E001556, dlc=8, payload=b"\x01\x02\x03\x04\x05\x06\x07\x08")
+        adapter._process_stream_chunk(ann_pkt)
+
+        assert adapter._ecu_serial == 0x556
+        assert adapter._ecu_claimed is True
+        assert len(written_packets) == 2  # (1) node_ann + ecu_claim, (2) 5-frame cmd 0x44 poll
+
+        # Check node announcement + claim packets
+        p_ann = parse_holley_can_packet(written_packets[0][:20])
+        p_claim = parse_holley_can_packet(written_packets[0][20:40])
+        assert p_ann is not None and p_ann.arbitration_id == 0x0E002923 and p_ann.dlc == 0
+        assert p_claim is not None and p_claim.arbitration_id == 0x0E01A923 and p_claim.payload == b"\x00\x02\x05\x56"
+
+        # Check 5-frame cmd 0x44 poll (100 bytes = 5 * 20-byte USBC packets)
+        assert len(written_packets[1]) == 5 * PACKET_SIZE
+        p_poll_0 = parse_holley_can_packet(written_packets[1][:20])
+        assert p_poll_0 is not None
+        assert p_poll_0.arbitration_id == (0x14002800 | (0x556 << 14) | PC_NODE_SERIAL)
+        assert p_poll_0.payload == b"\x00\x00\x00\x18" + RPC_MAGIC
+
+        # 2. Construct a simulated 2512-byte V3 .dl row (RPM=4200 at slot 1, MAP=185 kPa at slot 31, AFR=11.5 at slot 7)
+        dl_le = bytearray(V3_MONITOR_RECORD_SIZE)
+        struct.pack_into("<fI", dl_le, 1 * 8, 4200.0, 0)    # slot 1 = rpm
+        struct.pack_into("<fI", dl_le, 7 * 8, 11.5, 0)      # slot 7 = afr_avg
+        struct.pack_into("<fI", dl_le, 31 * 8, 185.0, 0)    # slot 31 = map_kpa
+        struct.pack_into("<fI", dl_le, 38 * 8, 70.3, 0)     # slot 38 = fuel_pressure
+
+        # Convert to big-endian float stream and RLE-compress (matching ECU cmd 0x44 format)
+        dl_be = _byte_swap_4(bytes(dl_le))
+        rle_payload = bytearray()
+        i = 0
+        while i < len(dl_be):
+            b_val = dl_be[i]
+            run = 1
+            while i + run < len(dl_be) and dl_be[i + run] == b_val and run < 255:
+                run += 1
+            if run >= 4 or b_val == 0xFF:
+                rle_payload.extend((0xFF, run, b_val))
+                i += run
+            else:
+                rle_payload.append(b_val)
+                i += 1
+
+        rpc_header = struct.pack(">4I", CMD_MONITOR_RLE, 0, 0, len(rle_payload))
+        rpc_body = rpc_header + bytes(rle_payload)
+        rpc_crc = struct.pack(">I", zlib.crc32(rpc_body) & 0xFFFFFFFF)
+        full_rpc = RPC_MAGIC + rpc_body + rpc_crc
+
+        # Frame the ECU RPC response into 20-byte USBC packets on CAN ID 0x1048D556
+        ecu_resp_can_id = 0x10001000 | (PC_NODE_SERIAL << 14) | 0x556
+        resp_stream = bytearray()
+        resp_stream.extend(
+            build_usbc_packet(
+                ecu_resp_can_id,
+                dlc=8,
+                payload=struct.pack(">I", len(full_rpc)) + RPC_MAGIC,
+            )
+        )
+        off = 4
+        while off < len(full_rpc):
+            chunk = full_rpc[off : off + 8]
+            resp_stream.extend(build_usbc_packet(ecu_resp_can_id, dlc=len(chunk), payload=chunk))
+            off += len(chunk)
+        resp_stream.extend(build_usbc_packet(ecu_resp_can_id, dlc=0))
+
+        # 3. Feed the multi-frame ECU response into HolleyUsbCanAdapter
+        adapter._process_stream_chunk(bytes(resp_stream))
+        assert adapter._monitor_records_decoded == 1
+
+        # Drain queued frames and verify decoded HEFI broadcast channels
+        from holley_can.protocol import decode_frame, is_hefi_broadcast
+
+        decoded_by_name = {}
+        while not adapter._queue.empty():
+            raw_frame = adapter._queue.get_nowait()
+            if is_hefi_broadcast(raw_frame.arbitration_id):
+                df = decode_frame(raw_frame.arbitration_id, raw_frame.data, raw_frame.timestamp)
+                decoded_by_name[df.name] = df.value_a
+
+        assert abs(decoded_by_name["rpm"] - 4200.0) < 0.1
+        assert abs(decoded_by_name["afr_avg"] - 11.5) < 0.01
+        assert abs(decoded_by_name["map_kpa"] - 185.0) < 0.1
+        assert abs(decoded_by_name["fuel_pressure"] - 70.3) < 0.1
+

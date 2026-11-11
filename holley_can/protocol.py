@@ -493,6 +493,24 @@ def extract_ecu_serial(can_id: int) -> int:
     return can_id & SERIAL_MASK
 
 
+def build_can_id(channel_index: int, ecu_serial: int = 0x556) -> int:
+    """
+    Construct a 29-bit Holley Standard (HEFI) broadcast CAN ID:
+      Bit 28:       1 (Broadcast)
+      Bits 25..27:  0b111 (Broadcast target = 7)
+      Bits 14..24:  channel_index (11 bits)
+      Bits 11..13:  0b010 (Source = ECU)
+      Bits 0..10:   ecu_serial (11 bits)
+    """
+    return (
+        (1 << 28)
+        | (0b111 << 25)
+        | ((channel_index & 0x7FF) << 14)
+        | (0b010 << 11)
+        | (ecu_serial & 0x7FF)
+    )
+
+
 def decode_payload(data: bytes) -> tuple[float, float]:
     """
     Decode an 8-byte HEFI payload into two big-endian IEEE 754 floats.
@@ -632,3 +650,33 @@ def is_hefi_broadcast(can_id: int) -> bool:
 
     target = (clean_id >> 25) & 0b111
     return target in (0b000, 0b111)
+
+
+def is_hefi_announcement(can_id: int) -> bool:
+    """
+    Returns True if the 29-bit CAN ID is a Holley CAN Bus 1 node announcement /
+    heartbeat frame (cmd_bit == 0, target == 0b111 -> 0x0E...).
+    """
+    clean_id = can_id & 0x1FFFFFFF
+    return (clean_id & 0x1E000000) == 0x0E000000
+
+
+def is_ecu_announcement(can_id: int) -> bool:
+    """
+    Returns True if the 29-bit CAN ID is a Terminator X / HP / Dominator ECU
+    announcement frame on CAN Bus 1 (e.g. 0x0E001556).
+
+    Verified from Terminator X.exe (0x3c1600):
+      - cmd_bit (bit 28) == 0
+      - target (bits 25..27) == 7 (0x0E...)
+      - source_id (bits 14..24) in (0, 1)
+      - source_status (bits 11..13) == 2 (ECU active heartbeat)
+      - ecu_serial (bits 0..10) == 11-bit ECU serial (e.g. 0x556)
+    """
+    clean_id = can_id & 0x1FFFFFFF
+    if (clean_id & 0x1E000000) != 0x0E000000:
+        return False
+    source_id = (clean_id >> 14) & 0x7FF
+    source_status = (clean_id >> 11) & 0x7
+    return source_id in (0, 1) and source_status == 2
+

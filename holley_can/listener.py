@@ -27,6 +27,8 @@ from .protocol import (
     decode_racepak_frame,
     extract_channel_index,
     extract_ecu_serial,
+    is_ecu_announcement,
+    is_hefi_announcement,
     is_hefi_broadcast,
     is_racepak_header_id,
 )
@@ -300,11 +302,29 @@ class CANListener:
                     self._error_count += 1
                     continue
 
-                if not msg.is_extended_id or len(msg.data) != 8:
+                if not msg.is_extended_id:
                     continue
 
                 ts = msg.timestamp if msg.timestamp else time.time()
                 raw_bytes = bytes(msg.data)
+
+                # Detect ECU announcement frames on CAN Bus 1 (e.g. 0x0E001556)
+                if is_hefi_announcement(msg.arbitration_id):
+                    if is_ecu_announcement(msg.arbitration_id):
+                        ecu_ser = extract_ecu_serial(msg.arbitration_id)
+                        self._serial_votes[ecu_ser] += 1
+                        if self._ecu_serial is None:
+                            self._ecu_serial = ecu_ser
+                            logger.info(
+                                "Detected Terminator X ECU announcement on CAN Bus 1: CAN_ID=0x%08X (Serial 0x%03X / %d)",
+                                msg.arbitration_id,
+                                ecu_ser,
+                                ecu_ser,
+                            )
+                    continue
+
+                if len(raw_bytes) != 8:
+                    continue
 
                 # Auto-detect Racepak header frame (0x1E001000, channel_index == 0)
                 if is_racepak_header_id(msg.arbitration_id):
