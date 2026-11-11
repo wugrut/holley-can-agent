@@ -62,6 +62,8 @@ def load_config(config_path: Optional[str] = None) -> dict:
         base_dir / "config.portable.yaml",
         Path("config.yaml"),
     ])
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / "config.yaml")
 
     for p in candidates:
         if p.exists():
@@ -619,8 +621,8 @@ def main() -> None:
     config = load_config(args.config)
     can_cfg = config.get("can", {})
 
-    # Default to 'copilot' if no subcommand provided
-    command = args.command or "copilot"
+    # Default to 'dashboard' if no subcommand provided (e.g. user double-clicked .exe)
+    command = args.command or "dashboard"
 
     def default_channel_for_interface(iface: str) -> str:
         if iface in ("holley", "holley_usbcan"):
@@ -632,10 +634,10 @@ def main() -> None:
         return "can0"
 
     if command == "preflight":
-        iface = args.interface or can_cfg.get("interface", "holley")
-        chan = args.channel or can_cfg.get("channel") or default_channel_for_interface(iface)
-        br = args.bitrate or can_cfg.get("bitrate", 1_000_000)
-        asyncio.run(run_preflight(interface=iface, channel=chan, bitrate=br, sniff_seconds=args.seconds))
+        iface = getattr(args, "interface", None) or can_cfg.get("interface", "holley")
+        chan = getattr(args, "channel", None) or can_cfg.get("channel") or default_channel_for_interface(iface)
+        br = getattr(args, "bitrate", None) or can_cfg.get("bitrate", 1_000_000)
+        asyncio.run(run_preflight(interface=iface, channel=chan, bitrate=br, sniff_seconds=getattr(args, "seconds", 12.0)))
 
     elif command in ("copilot", "simulator"):
         arg_iface = getattr(args, "interface", None)
@@ -662,20 +664,21 @@ def main() -> None:
         )
 
     elif command == "dashboard":
-        raw_iface = args.interface or can_cfg.get("interface")
+        raw_iface = getattr(args, "interface", None) or can_cfg.get("interface")
         if not raw_iface or (sys.platform == "win32" and raw_iface == "socketcan"):
             iface = "holley"
         else:
             iface = raw_iface
-        chan = args.channel or can_cfg.get("channel") or default_channel_for_interface(iface)
-        br = args.bitrate or can_cfg.get("bitrate", 1_000_000)
-        port = args.port or config.get("api", {}).get("port", 8420)
+        chan = getattr(args, "channel", None) or can_cfg.get("channel") or default_channel_for_interface(iface)
+        br = getattr(args, "bitrate", None) or can_cfg.get("bitrate", 1_000_000)
+        port = getattr(args, "port", None) or config.get("api", {}).get("port", 8420)
+        no_browser = getattr(args, "no_browser", False)
         run_dashboard(
             interface=iface,
             channel=chan,
             bitrate=br,
             port=port,
-            open_browser=not args.no_browser,
+            open_browser=not no_browser,
             config_dict=config,
         )
 

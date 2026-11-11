@@ -58,17 +58,18 @@ def build():
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 2. Configure PyInstaller Arguments
+    # 2. Configure PyInstaller Arguments for Single Standalone Executable
     entry_script = str(BASE_DIR / "portable_entry.py")
     static_data = f"{BASE_DIR / 'holley_can' / 'static'};holley_can/static"
     dbc_data = f"{BASE_DIR / 'holley_can' / 'data'};holley_can/data"
     fixtures_data = f"{BASE_DIR / 'data' / 'fixtures'};data/fixtures"
     csv_data = f"{BASE_DIR / 'holley_can_channels.csv'};."
+    config_data = f"{BASE_DIR / 'config.portable.yaml'};."
 
     pyinstaller_args = [
         entry_script,
-        "--name=efi_copilot",
-        "--onedir",
+        "--name=Holley_EFI_Copilot",
+        "--onefile",
         "--noconfirm",
         "--clean",
         f"--distpath={DIST_DIR}",
@@ -77,6 +78,7 @@ def build():
         f"--add-data={dbc_data}",
         f"--add-data={fixtures_data}",
         f"--add-data={csv_data}",
+        f"--add-data={config_data}",
         # CAN Backends & Datalog Parser & Tune Optimizer & Gemini
         "--hidden-import=app.hardware.holley_usbcan",
         "--hidden-import=holley_can.dl_parser",
@@ -89,7 +91,7 @@ def build():
         "--hidden-import=can.interfaces.virtual",
         "--hidden-import=serial",
         "--hidden-import=serial.tools.list_ports",
-        # FastAPI & Uvicorn
+        # FastAPI & Uvicorn & Multipart
         "--hidden-import=uvicorn",
         "--hidden-import=uvicorn.logging",
         "--hidden-import=uvicorn.loops",
@@ -102,6 +104,7 @@ def build():
         "--hidden-import=uvicorn.lifespan",
         "--hidden-import=uvicorn.lifespan.on",
         "--hidden-import=fastapi",
+        "--hidden-import=multipart",
         "--hidden-import=websockets",
         "--hidden-import=pydantic",
         "--hidden-import=yaml",
@@ -109,17 +112,18 @@ def build():
         "--hidden-import=numpy",
     ]
 
-    print("\n[1/4] Running PyInstaller Compiler...")
+    print("\n[1/3] Running PyInstaller One-File Compiler...")
     PyInstaller.__main__.run(pyinstaller_args)
 
-    # The onedir output is in DIST_DIR / "efi_copilot"
-    compiled_folder = DIST_DIR / "efi_copilot"
-    if compiled_folder.exists() and compiled_folder != TARGET_DIR:
-        if TARGET_DIR.exists():
-            shutil.rmtree(TARGET_DIR)
-        compiled_folder.rename(TARGET_DIR)
-
-    print(f"   [OK] Standalone executable compiled into: {TARGET_DIR}")
+    single_exe = DIST_DIR / "Holley_EFI_Copilot.exe"
+    compat_exe = DIST_DIR / "efi_copilot.exe"
+    TARGET_DIR.mkdir(parents=True, exist_ok=True)
+    if single_exe.exists():
+        shutil.copy2(single_exe, compat_exe)
+        shutil.copy2(single_exe, TARGET_DIR / "Holley_EFI_Copilot.exe")
+        shutil.copy2(single_exe, TARGET_DIR / "efi_copilot.exe")
+        exe_size_mb = single_exe.stat().st_size / (1024 * 1024)
+        print(f"   [OK] Standalone Single Executable: {single_exe.name} ({exe_size_mb:.1f} MB)")
 
     # 3. Copy Launchers, Config, and Documentation into Target Distribution
     print("\n[2/4] Assembling Portable Distribution Bundle...")
