@@ -164,7 +164,7 @@ To ensure flawless execution on the tuning laptop without requiring Python or ad
 - Runtime path resolver:
   - Reads bundled static assets from `sys._MEIPASS`.
   - Writes outputs (`COPY 16x16 VE TABLE (CTRL+V).txt`, logs, config) to `sys.executable` directory.
-- Double-clicking the `.exe` automatically spawns the background server, launches the default browser to `http://localhost:8000`, and activates the auto-watcher.
+- Double-clicking the `.exe` automatically spawns the background server, launches the default browser to `http://localhost:8420`, and activates the auto-watcher.
 
 ---
 
@@ -185,4 +185,4 @@ The physical CAN layer retains multi-adapter support for users capturing live te
 
 1. **Read-Only Safety Invariant:** Under no circumstances does the application issue write packets, flash commands, or configuration overrides to the vehicle's ECU.
 2. **API Key Isolation:** Gemini API keys are entered by the user in the browser and stored strictly in browser `localStorage`. They are never sent to external third parties or committed to version control.
-3. **Local Loopback Only:** By default, the FastAPI server binds to `127.0.0.1:8000` to prevent unintended local network exposure.
+3. **Local Loopback Only:** By default, the FastAPI server binds to `127.0.0.1:8420` to prevent unintended local network exposure.

@@ -169,7 +169,9 @@ class TestHolleyDatalogParser:
         assert 4.0 <= conv["converter_slip_pct"] <= 10.0
 
         # Verify transient dTPS/dt and cold coolant filtering + New_VE mathematical formula
-        opt = VETableOptimizer(base_fuel_psi=58.0, min_coolant_f=160.0)
+        # This test verifies the raw VE formula, so disable the per-pass cap and confidence gate
+        # (those are covered in test_tune_optimizer.py).
+        opt = VETableOptimizer(base_fuel_psi=58.0, min_coolant_f=160.0, max_step_pct=20.0, min_hits=1)
         # Cold sample (145°F < 160°F) -> rejected
         assert opt.ingest_row({
             "timestamp_s": 1.0, "rpm": 2000.0, "map_kpa": 60.0, "tps": 20.0,

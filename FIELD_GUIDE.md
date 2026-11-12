@@ -10,7 +10,7 @@ This field guide is designed for automotive tuners, calibrators, and dyno operat
 1. **Copy `Holley_EFI_Copilot.exe`** to your tuning laptop (desktop or any folder, or run directly from Google Drive / USB stick).
 2. **Double-click `Holley_EFI_Copilot.exe`**.
    - No Python installation, virtual environments, or batch files required.
-   - The app automatically launches the local server and opens your default web browser to `http://localhost:8000`.
+   - The app automatically launches the local server and opens your default web browser to `http://localhost:8420`.
    - The **Zero-Touch Auto-Pilot File Watcher** immediately begins monitoring your default Holley datalog and tune folders.
 3. **Set your Google Gemini API Key** (optional, recommended for live AI commentary):
    - Click the ⚙️ Settings gear in the header.
@@ -142,6 +142,15 @@ Whenever a file is saved or dragged into the window:
 1. **Audio Bell Chime** plays alert in the browser.
 2. **16×16 VE Table** calculates corrections and writes COPY 16x16 VE TABLE (CTRL+V).txt right next to the executable.
 3. **Gemini Copilot** produces an engineering explanation of boost ramp rate, fuel rail pressure vs boost 1:1 tracking, and transient lambda safety.
+
+
+### Safety & Confidence Features
+
+- **Safety banner:** after every pull, a red (critical) or amber (warning) banner appears above the table for lean AFR under boost, injector differential pressure below 55 psi (critical below 52), knock retard, overboost/over-rev, and injector duty. The spoken announcement reports the real findings, and **Copy 16x16 VE asks for confirmation while a critical alert is active.**
+- **Per-pass change limit:** no cell moves more than **5%** per pass (marked with a triangle). The tooltip shows the full measured error so you know another pass is needed.
+- **Sample-count confidence:** cells with fewer than **5** steady-state samples are left unchanged (striped/dim) instead of being corrected from noise.
+- **Comparison:** the panel above the table compares this pull with the previous one (boost, AFR error, fuel differential, knock) and tells you whether the table is improving.
+- **Safe auto-ingest:** the watcher waits until Holley has finished writing a log before reading it, and retries a few times if it is still locked.
 
 ---
 

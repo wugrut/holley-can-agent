@@ -799,3 +799,51 @@ body {
         overflow-y: auto;
     }
 }
+
+
+/* ─── Safety alert banner ─────────────────────────────────────────────── */
+.safety-banner {
+    margin: 0;
+    padding: 10px 20px;
+    border-bottom: 2px solid #ffb300;
+    background: rgba(255, 179, 0, 0.14);
+    color: #ffe082;
+}
+.safety-banner.critical {
+    border-bottom-color: #ff1744;
+    background: rgba(255, 23, 68, 0.22);
+    color: #ffcdd2;
+    animation: safetyPulse 1.6s ease-in-out infinite;
+}
+.safety-banner.hidden { display: none; }
+.safety-banner-head { display: flex; align-items: center; gap: 10px; font-size: 14px; letter-spacing: 0.5px; }
+.safety-banner-source { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; opacity: 0.8; }
+.safety-banner-list { margin: 6px 0 0 28px; padding: 0; font-size: 13px; line-height: 1.45; }
+.safety-banner-list li.critical { color: #ff8a80; font-weight: 600; }
+@keyframes safetyPulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
+
+/* ─── Pull / table comparison ─────────────────────────────────────────── */
+.compare-box {
+    margin: 0 0 8px 0;
+    padding: 8px 12px;
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    border-radius: 6px;
+    background: rgba(0, 229, 255, 0.06);
+    font-size: 12px;
+    line-height: 1.5;
+}
+.compare-box.hidden { display: none; }
+.compare-box .cmp-good { color: #00e676; font-weight: 700; }
+.compare-box .cmp-bad { color: #ff8a80; font-weight: 700; }
+.compare-box .cmp-flat { color: #a0aec0; font-weight: 700; }
+
+/* ─── VE cell confidence / step cap ──────────────────────────────────── */
+.ve-cell.lowconf { opacity: 0.45; background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.07) 4px 8px); }
+.ve-cell.capped .ve-corr::after { content: ' \25B2'; color: #ffb300; font-size: 9px; }
+.ve-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 4px; font-size: 11px; color: #a0aec0; align-items: center; }
+.ve-legend .lg { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.ve-legend .lg.lean { background: #00e676; }
+.ve-legend .lg.rich { background: #ff9100; }
+.ve-legend .lg.ok { background: #455a64; }
+.ve-legend .lg.low { background: repeating-linear-gradient(45deg, #455a64 0 3px, #263238 3px 6px); }
+.ve-legend .lg-note { margin-left: auto; }

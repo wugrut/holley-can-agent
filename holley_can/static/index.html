@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.0">
+    <link rel="stylesheet" href="/static/style.css?v=3.1">
 </head>
 <body>
     <!-- Top Header -->
@@ -50,6 +50,16 @@
             </button>
         </div>
     </header>
+
+    <!-- Safety Alert Banner (shown only when the latest pull has warnings/critical findings) -->
+    <div id="safety-banner" class="safety-banner hidden" role="alert" aria-live="assertive">
+        <div class="safety-banner-head">
+            <span id="safety-banner-icon" class="safety-banner-icon">⚠️</span>
+            <strong id="safety-banner-title">SAFETY ALERT</strong>
+            <span id="safety-banner-source" class="safety-banner-source"></span>
+        </div>
+        <ul id="safety-banner-list" class="safety-banner-list"></ul>
+    </div>
 
     <!-- Gemini Key Config Panel (Collapsible) -->
     <div id="gemini-key-panel" class="key-panel hidden">
@@ -175,6 +185,9 @@
                 </div>
             </div>
 
+            <!-- Pull-to-Pull / Table Comparison -->
+            <div id="compare-box" class="compare-box hidden"></div>
+
             <!-- Optimizer Stats Summary Row -->
             <div class="optimizer-metrics-bar">
                 <div class="metric-item">
@@ -193,6 +206,10 @@
                     <span class="metric-label">RICH CELLS (TRIM FUEL)</span>
                     <span id="metric-rich" class="metric-val orange">0</span>
                 </div>
+                <div class="metric-item" title="Cells with too few steady-state samples; left unchanged">
+                    <span class="metric-label">LOW-CONFIDENCE (HELD)</span>
+                    <span id="metric-lowconf" class="metric-val">0</span>
+                </div>
                 <div class="metric-item">
                     <span class="metric-label">LAST SOURCE</span>
                     <span id="metric-source" class="metric-val">None</span>
@@ -209,6 +226,14 @@
                         <!-- Populated by JS: RPM rows -->
                     </tbody>
                 </table>
+            </div>
+
+            <div class="ve-legend">
+                <span><i class="lg lean"></i> lean (add fuel)</span>
+                <span><i class="lg rich"></i> rich (remove fuel)</span>
+                <span><i class="lg ok"></i> within target</span>
+                <span><i class="lg low"></i> too few samples (unchanged)</span>
+                <span class="lg-note">&#9650; = capped at <b id="legend-step">5</b>% per pass</span>
             </div>
 
             <!-- VE Action Bar & Safety Notice -->
@@ -233,6 +258,6 @@
     <!-- Cell Detail Tooltip Popup -->
     <div id="cell-tooltip" class="cell-tooltip hidden"></div>
 
-    <script src="/static/dashboard.js?v=3.0"></script>
+    <script src="/static/dashboard.js?v=3.1"></script>
 </body>
 </html>

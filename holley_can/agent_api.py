@@ -30,7 +30,12 @@ from .gemini_agent import GeminiAgent, GENAI_AVAILABLE
 from .listener import CANListener
 from .protocol import DecodedFrame
 from .storage import TimeSeriesStorage
-from .tune_optimizer import AutoHandoffWatcher, PostPullDetector, VETableOptimizer
+from .tune_optimizer import (
+    AutoHandoffWatcher,
+    PostPullDetector,
+    VETableOptimizer,
+    compare_scorecards,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +136,18 @@ def create_app(
     pull_detector = PostPullDetector(base_fuel_psi=58.0)
     gemini_agent = GeminiAgent(ve_optimizer=ve_optimizer)
 
+    def matrix_with_context(include_learn: bool = True) -> dict:
+        """VE matrix plus latest pull scorecard, safety alerts and pull-to-pull comparison."""
+        payload = ve_optimizer.get_matrix_payload(include_learn=include_learn)
+        cards = pull_detector.recent_scorecards  # newest first
+        latest = cards[0] if cards else None
+        payload["scorecards"] = cards
+        payload["latest_scorecard"] = latest
+        payload["safety_alerts"] = latest.get("safety_alerts", []) if latest else []
+        payload["safety_level"] = latest.get("safety_level", "info") if latest else "info"
+        payload["pull_comparison"] = compare_scorecards(cards[0], cards[1]) if len(cards) >= 2 else None
+        return payload
+
     async def _on_auto_event(event: Dict[str, Any]):
         """Zero-touch handler triggered when a Holley datalog or tune file is saved."""
         event_type = event.get("type")
@@ -157,11 +174,13 @@ def create_app(
                 )
                 if scorecard:
                     prompt += (
-                        f"• Peak Boost: {scorecard.get('peak_boost_psi', 0):.1f} PSI @ {scorecard.get('peak_rpm', 0):.0f} RPM\n"
-                        f"• Average AFR: {scorecard.get('avg_afr', 0):.2f} vs Target {scorecard.get('avg_target_afr', 0):.2f} (Error: {scorecard.get('afr_error', 0):+.2f})\n"
-                        f"• Minimum Fuel Pressure: {scorecard.get('min_fuel_psi', 0):.1f} PSI (effective rail differential: {scorecard.get('min_delta_psi', 0):.1f} PSI vs 58 PSI target)\n"
-                        f"• Max Injector Duty Cycle: {scorecard.get('max_duty_pct', 0):.1f}%\n"
+                        f"• Peak Boost: {scorecard.get('peak_boost_psig', 0):.1f} PSI @ {scorecard.get('peak_rpm', 0):.0f} RPM\n"
+                        f"• Average AFR: {scorecard.get('avg_afr', 0):.2f} vs Target {scorecard.get('target_afr', 0):.2f} (Error: {scorecard.get('afr_error', 0):+.2f})\n"
+                        f"• Minimum Fuel Pressure: {scorecard.get('min_fuel_pressure_psi', 0):.1f} PSI (effective rail differential: {scorecard.get('min_differential_fuel_psi', 0):.1f} PSI vs 58 PSI target)\n"
+                        f"• Max Injector Duty Cycle: {scorecard.get('max_injector_duty_pct', 0):.1f}%\n"
                     )
+                    for a in scorecard.get("safety_alerts", []):
+                        prompt += f"• SAFETY ALERT ({a['level'].upper()}): {a['message']}\n"
                 prompt += (
                     "Audit this run: confirm if 1:1 boost-referenced fuel pressure held safe, "
                     "summarize wideband tracking, and give 2-3 specific tuning takeaways for the next pass."
@@ -175,12 +194,13 @@ def create_app(
                 logger.warning("Auto Gemini evaluation error: %s", e)
 
             # 3. Broadcast to all open WebSocket clients
-            matrix_payload = ve_optimizer.get_matrix_payload(include_learn=True)
-            matrix_payload["scorecards"] = pull_detector.recent_scorecards
+            matrix_payload = matrix_with_context(include_learn=True)
             auto_msg = json.dumps({
                 "type": "auto_pull_analyzed",
                 "log_name": log_name,
                 "scorecard": scorecard,
+                "safety_alerts": matrix_payload["safety_alerts"],
+                "safety_level": matrix_payload["safety_level"],
                 "gemini_answer": gemini_answer,
                 "matrix": matrix_payload,
                 "timestamp": time.time(),
@@ -555,10 +575,9 @@ def create_app(
     @app.get("/api/optimizer/matrix")
     async def get_optimizer_matrix(include_learn: bool = Query(True, description="Whether to fold Fuel Learn % into Base VE recommendations")):
         """Returns the 16x16 VE Hit & Correction Matrix, Holley TSV clipboard string, and Post-Pull scorecards."""
-        payload = ve_optimizer.get_matrix_payload(include_learn=include_learn)
+        payload = matrix_with_context(include_learn=include_learn)
         payload["handoff_mode"] = handoff_watcher.handoff_mode
         payload["last_auto_ingested_log"] = handoff_watcher.last_auto_ingested_log
-        payload["scorecards"] = pull_detector.recent_scorecards
         return payload
 
     @app.post("/api/optimizer/ingest_datalog")
@@ -578,9 +597,8 @@ def create_app(
             parser = HolleyDatalogParser(file_path)
             if hasattr(listener, "inject_decoded_frames"):
                 await listener.inject_decoded_frames(parser.to_decoded_frames())
-            matrix = ve_optimizer.get_matrix_payload()
+            matrix = matrix_with_context()
             matrix["handoff_mode"] = handoff_watcher.handoff_mode
-            matrix["scorecards"] = pull_detector.recent_scorecards
             return {"status": "success", "matrix": matrix}
         except Exception as e:
             logger.error("Optimizer datalog ingest error: %s", e)
@@ -602,8 +620,7 @@ def create_app(
             parser = HolleyDatalogParser(str(dest_path))
             summary = parser.summarize()
             handoff_watcher._ingest_file(str(dest_path))
-            matrix = ve_optimizer.get_matrix_payload()
-            matrix["scorecards"] = pull_detector.recent_scorecards
+            matrix = matrix_with_context()
             return {
                 "status": "success",
                 "filename": file.filename,
@@ -620,7 +637,7 @@ def create_app(
         """Resets the 16x16 VE accumulator cells for a fresh tuning pass."""
         ve_optimizer.reset()
         pull_detector.recent_scorecards.clear()
-        return {"status": "success", "matrix": ve_optimizer.get_matrix_payload()}
+        return {"status": "success", "matrix": matrix_with_context()}
 
     # ── Run Logger API ──────────────────────────────────────────────────
 

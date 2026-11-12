@@ -215,27 +215,30 @@ class GeminiAgent:
         and formatted TSV string ready for Holley software clipboard copy.
         """
         payload = self.ve_optimizer.get_matrix_payload(include_learn=include_learn)
-        matrix = payload.get("matrix", [])
 
-        # Find cells with significant adjustments
+        # Find cells with significant adjustments (these are the limiter-applied, confidence-gated values)
         large_lean_corrections = []  # Engine was lean, needs more VE
         large_rich_corrections = []  # Engine was rich, needs less VE
 
-        for r_idx, row in enumerate(matrix):
-            rpm = row["rpm"]
-            for c_idx, cell in enumerate(row["cells"]):
-                map_kpa = cell["map_kpa"]
+        for row in payload.get("rows", []):
+            map_kpa = row["map_kpa"]
+            for cell in row["cells"]:
                 corr = cell["correction_pct"]
                 hits = cell["hits"]
-                if hits >= 3:
+                if cell.get("confidence") in ("medium", "high"):
+                    entry = {
+                        "rpm": cell["rpm"],
+                        "map_kpa": map_kpa,
+                        "correction_pct": round(corr, 1),
+                        "raw_correction_pct": cell.get("raw_correction_pct", corr),
+                        "limited_by_step_cap": cell.get("limited", False),
+                        "hits": hits,
+                        "confidence": cell["confidence"],
+                    }
                     if corr > 3.0:
-                        large_lean_corrections.append({
-                            "rpm": rpm, "map_kpa": map_kpa, "correction_pct": round(corr, 1), "hits": hits
-                        })
+                        large_lean_corrections.append(entry)
                     elif corr < -3.0:
-                        large_rich_corrections.append({
-                            "rpm": rpm, "map_kpa": map_kpa, "correction_pct": round(corr, 1), "hits": hits
-                        })
+                        large_rich_corrections.append(entry)
 
         large_lean_corrections.sort(key=lambda x: x["correction_pct"], reverse=True)
         large_rich_corrections.sort(key=lambda x: x["correction_pct"])
@@ -243,9 +246,13 @@ class GeminiAgent:
         return {
             "total_steady_state_samples": payload.get("total_samples", 0),
             "cells_with_data": payload.get("cells_populated", 0),
+            "low_confidence_cells_left_unchanged": payload.get("low_confidence_cells", 0),
+            "max_step_pct_per_pass": payload.get("max_step_pct"),
+            "cells_limited_by_step_cap": payload.get("limited_cells", 0),
             "top_lean_cells_needing_more_fuel": large_lean_corrections[:5],
             "top_rich_cells_needing_less_fuel": large_rich_corrections[:5],
-            "tsv_preview": payload.get("tsv_clipboard", "")[:300] + "...",
+            "comparison_to_previous_log": payload.get("comparison"),
+            "tsv_preview": (payload.get("holley_tsv_ve") or "")[:300] + "...",
             "last_source": payload.get("last_source", "none"),
         }
 

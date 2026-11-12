@@ -293,12 +293,21 @@ class VETableOptimizer:
         d_tps_threshold: float = 25.0,
         d_map_threshold: float = 65.0,
         steady_trim_target_pct: float = 2.0,
+        max_step_pct: float = 5.0,
+        min_hits: int = 5,
     ):
         self.base_fuel_psi = base_fuel_psi
         self.min_coolant_f = min_coolant_f
         self.d_tps_threshold = d_tps_threshold
         self.d_map_threshold = d_map_threshold
         self.steady_trim_target_pct = steady_trim_target_pct
+        # Per-pass correction limiter: no cell is moved more than +/- max_step_pct in one pass,
+        # and cells with fewer than min_hits steady-state samples are left unchanged.
+        self.max_step_pct = max_step_pct
+        self.min_hits = min_hits
+        # Snapshot of the previously loaded log's corrections, for before/after comparison.
+        self._loaded_name: Optional[str] = None
+        self._prev_snapshot: Optional[Dict[str, Any]] = None
 
         self.rpm_axis = list(RPM_AXIS)
         self.map_axis = list(MAP_AXIS)
@@ -523,8 +532,14 @@ class VETableOptimizer:
         """Parse an entire .dl or .dlz file and populate the 16x16 Fairmont VE matrix."""
         parser = HolleyDatalogParser(file_path)
         rows = parser.parse_rows()
+        new_name = Path(file_path).name
+        # Keep the previous distinct log's corrections so the UI can show a before/after comparison.
+        # Re-ingesting the same file (e.g. it was re-saved) must not overwrite the baseline.
+        if self.total_samples_ingested > 0 and self._loaded_name and self._loaded_name != new_name:
+            self._prev_snapshot = self._snapshot()
+        self._loaded_name = new_name
         self.reset()
-        self.last_source = Path(file_path).name
+        self.last_source = new_name
         # First try strict >160°F filter; if the log was a short warmup/shop test with 0 warm rows, fallback
         for r in rows:
             self.ingest_row(r, allow_cold=False)
@@ -535,7 +550,64 @@ class VETableOptimizer:
                 self.ingest_row(r, allow_cold=True)
         return self.get_matrix_payload()
 
-    def get_matrix_payload(self, include_learn: bool = True) -> Dict[str, Any]:
+    def export_holley_tsv(self, include_learn: bool = True) -> str:
+        """Tab-delimited 16x16 recommended VE table, ready to paste into Holley's Fuel VE table."""
+        return self.get_matrix_payload(include_learn=include_learn, include_comparison=False)["holley_tsv_ve"]
+
+    def _snapshot(self) -> Dict[str, Any]:
+        """Compact per-cell record of the current corrections, used as the 'before' side of a comparison."""
+        payload = self.get_matrix_payload(include_learn=True, include_comparison=False)
+        cells: Dict[str, Dict[str, float]] = {}
+        for row in payload["rows"]:
+            for c in row["cells"]:
+                if c["hits"] > 0:
+                    cells[f"{c['map_kpa']}:{c['rpm']}"] = {
+                        "raw": c["raw_correction_pct"],
+                        "hits": c["hits"],
+                    }
+        return {"source": self.last_source, "cells": cells}
+
+    def _build_comparison(self, current_cells: Dict[str, Dict[str, float]]) -> Optional[Dict[str, Any]]:
+        """Compares this log's per-cell corrections to the previous log's (cells present in both)."""
+        prev = self._prev_snapshot
+        if not prev:
+            return None
+        shared = [k for k in current_cells if k in prev["cells"]]
+        if not shared:
+            return {
+                "previous_source": prev["source"],
+                "current_source": self.last_source,
+                "cells_compared": 0,
+                "trend": "no_overlap",
+                "summary": "The previous and current logs share no VE cells, so they can't be compared.",
+            }
+        prev_abs = sum(abs(prev["cells"][k]["raw"]) for k in shared) / len(shared)
+        now_abs = sum(abs(current_cells[k]["raw"]) for k in shared) / len(shared)
+        improved = sum(1 for k in shared if abs(current_cells[k]["raw"]) < abs(prev["cells"][k]["raw"]) - 0.5)
+        worsened = sum(1 for k in shared if abs(current_cells[k]["raw"]) > abs(prev["cells"][k]["raw"]) + 0.5)
+        delta = now_abs - prev_abs
+        if delta < -0.3:
+            trend = "improving"
+        elif delta > 0.3:
+            trend = "worse"
+        else:
+            trend = "flat"
+        return {
+            "previous_source": prev["source"],
+            "current_source": self.last_source,
+            "cells_compared": len(shared),
+            "mean_abs_correction_prev_pct": round(prev_abs, 2),
+            "mean_abs_correction_now_pct": round(now_abs, 2),
+            "cells_improved": improved,
+            "cells_worsened": worsened,
+            "trend": trend,
+            "summary": (
+                f"{len(shared)} cells in common: average error {prev_abs:.1f}% -> {now_abs:.1f}% "
+                f"({improved} improved, {worsened} worse)."
+            ),
+        }
+
+    def get_matrix_payload(self, include_learn: bool = True, include_comparison: bool = True) -> Dict[str, Any]:
         """
         Returns the full 16x16 matrix (ordered top-to-bottom from highest MAP 260 kPa
         down to 20 kPa, matching Holley Terminator X V3's visual Fuel VE table layout)
@@ -552,7 +624,9 @@ class VETableOptimizer:
         fp_warning_cells = 0
         knock_cells = 0
         cells_with_active_learn = 0
-
+        low_confidence_cells = 0
+        limited_cells = 0
+        snapshot_cells: Dict[str, Dict[str, float]] = {}
         tsv_ve_lines: List[str] = []
         tsv_corr_lines: List[str] = []
 
@@ -574,6 +648,9 @@ class VETableOptimizer:
                         "base_ve": default_ve,
                         "recommended_ve": default_ve,
                         "correction_pct": 0.0,
+                        "raw_correction_pct": 0.0,
+                        "confidence": "none",
+                        "limited": False,
                         "cl_comp_pct": 0.0,
                         "learn_pct": 0.0,
                         "afr_avg": None,
@@ -616,18 +693,34 @@ class VETableOptimizer:
 
                 cl_comp_percent = total_mult * 100.0
 
-                # Clamp single-pass correction to ±20% for safety
-                clamped_corr_pct = max(-20.0, min(20.0, cl_comp_percent))
+                # Clamp the raw single-pass correction to +/-20% as an absolute sanity bound
+                raw_corr_pct = max(-20.0, min(20.0, cl_comp_percent))
 
                 fp_warn = acc.fuel_psi_drop_hits > (acc.hits * 0.25)
                 if fp_warn:
                     fp_warning_cells += 1
                     # Never add positive VE fuel if mechanical rail pressure dropped below 58 PSI + 1:1 boost!
-                    if clamped_corr_pct > 0:
-                        clamped_corr_pct = 0.0
+                    if raw_corr_pct > 0:
+                        raw_corr_pct = 0.0
 
                 if avg_knock >= 1.5:
                     knock_cells += 1
+
+                # Confidence from steady-state sample count; thin cells are never changed.
+                if acc.hits < self.min_hits:
+                    confidence = "low"
+                    low_confidence_cells += 1
+                    clamped_corr_pct = 0.0
+                    limited = False
+                else:
+                    confidence = "medium" if acc.hits < self.min_hits * 3 else "high"
+                    # Per-pass limiter: move the table gradually, not all at once from one pull.
+                    clamped_corr_pct = max(-self.max_step_pct, min(self.max_step_pct, raw_corr_pct))
+                    limited = abs(raw_corr_pct) > self.max_step_pct + 1e-9
+                    if limited:
+                        limited_cells += 1
+
+                snapshot_cells[f"{map_val}:{rpm_val}"] = {"raw": raw_corr_pct, "hits": acc.hits}
 
                 # Target steady-state closed-loop trim error within ±2.0%
                 if abs(clamped_corr_pct) > self.steady_trim_target_pct:
@@ -644,6 +737,9 @@ class VETableOptimizer:
                     "base_ve": round(avg_base_ve, 1),
                     "recommended_ve": rec_ve,
                     "correction_pct": round(clamped_corr_pct, 1),
+                    "raw_correction_pct": round(raw_corr_pct, 1),
+                    "confidence": confidence,
+                    "limited": limited,
                     "cl_comp_pct": round(avg_cl, 1),
                     "learn_pct": round(avg_learn, 1),
                     "afr_avg": round(avg_afr, 2),
@@ -669,6 +765,13 @@ class VETableOptimizer:
             "platform": FAIRMONT_PLATFORM_SPEC["vehicle"],
             "engine": FAIRMONT_PLATFORM_SPEC["engine"],
             "source": self.last_source,
+            "last_source": self.last_source,
+            "max_step_pct": self.max_step_pct,
+            "min_hits": self.min_hits,
+            "low_confidence_cells": low_confidence_cells,
+            "limited_cells": limited_cells,
+            "cells_populated": cells_touched,
+            "comparison": self._build_comparison(snapshot_cells) if include_comparison else None,
             "include_learn": include_learn,
             "cells_with_active_learn": cells_with_active_learn,
             "learn_action_notice": (
@@ -698,6 +801,109 @@ class VETableOptimizer:
             "holley_tsv_ve": "\r\n".join(tsv_ve_lines),
             "holley_tsv_correction_pct": "\r\n".join(tsv_corr_lines),
         }
+
+
+_ALERT_RANK = {"info": 0, "warning": 1, "critical": 2}
+
+
+def build_safety_alerts(card: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Derives explicit, worst-first safety alerts from a pull scorecard.
+
+    Thresholds (Fairmont: 58 PSI boost-referenced rail, Deka 80s, VS 78/75):
+      - AFR leaner than target by >= 0.5 under boost (critical at >= 0.8; whole-pull average)
+      - Injector differential pressure < 55 PSI (critical < 52)
+      - Knock retard >= 1.5 deg (critical >= 4.0)
+      - Overboost / over-rev (critical)
+      - Injector duty >= 85% (critical >= 92%)
+    """
+    alerts: List[Dict[str, str]] = []
+
+    def add(level: str, code: str, message: str) -> None:
+        alerts.append({"level": level, "code": code, "message": message})
+
+    boost = float(card.get("peak_boost_psig", 0.0) or 0.0)
+    afr_err = float(card.get("afr_error", 0.0) or 0.0)
+    if boost >= 1.0 and afr_err >= 0.5:
+        add(
+            "critical" if afr_err >= 0.8 else "warning",
+            "lean_under_boost",
+            f"LEAN UNDER BOOST: AFR averaged {afr_err:+.2f} leaner than target at up to {boost:.1f} psi. "
+            "Do not increase boost or timing until this is fixed.",
+        )
+
+    diff = card.get("min_differential_fuel_psi")
+    if diff is not None and diff < 55.0:
+        add(
+            "critical" if diff < 52.0 else "warning",
+            "fuel_pressure_low",
+            f"FUEL PRESSURE: injector differential fell to {diff:.1f} psi (target 58). "
+            "Check pump voltage/flow, filter and the regulator boost reference line before adding VE.",
+        )
+
+    knock = float(card.get("max_knock_retard_deg", 0.0) or 0.0)
+    if knock >= 1.5:
+        add(
+            "critical" if knock >= 4.0 else "warning",
+            "knock",
+            f"KNOCK: retard reached {knock:.1f} degrees. Check fuel quality/ethanol %, IAT and plugs before pulling timing.",
+        )
+
+    if card.get("peak_boost_psig", 0.0) > card.get("boost_limit_psi", 17.0):
+        add(
+            "critical",
+            "overboost",
+            f"OVERBOOST: {boost:.1f} psi exceeds the {card.get('boost_limit_psi', 17.0):.0f} psi limit for this fuel.",
+        )
+
+    if card.get("peak_rpm", 0.0) > 6800.0:
+        add("critical", "overrev", f"OVER-REV: {card.get('peak_rpm', 0.0):.0f} RPM exceeded the 6800 RPM limit.")
+
+    duty = float(card.get("max_injector_duty_pct", 0.0) or 0.0)
+    if duty >= 85.0:
+        add(
+            "critical" if duty >= 92.0 else "warning",
+            "injector_duty",
+            f"INJECTOR DUTY: Deka 80s reached {duty:.1f}% duty. Little headroom left for more boost.",
+        )
+
+    alerts.sort(key=lambda a: -_ALERT_RANK[a["level"]])
+    return alerts
+
+
+def worst_alert_level(alerts: List[Dict[str, str]]) -> str:
+    return max((a["level"] for a in alerts), key=lambda lv: _ALERT_RANK[lv], default="info")
+
+
+def compare_scorecards(current: Dict[str, Any], previous: Dict[str, Any]) -> Dict[str, Any]:
+    """Pull-to-pull deltas (current minus previous) for the headline numbers."""
+    def delta(key: str) -> Optional[float]:
+        a, b = current.get(key), previous.get(key)
+        if a is None or b is None:
+            return None
+        return round(float(a) - float(b), 2)
+
+    def _afr_trend() -> Optional[bool]:
+        if "afr_error" not in current or "afr_error" not in previous:
+            return None
+        a, b = abs(current["afr_error"]), abs(previous["afr_error"])
+        if a < b - 0.02:
+            return True
+        if a > b + 0.02:
+            return False
+        return None  # effectively unchanged
+
+    return {
+        "previous_log": previous.get("log_name"),
+        "current_log": current.get("log_name"),
+        "peak_boost_psig": delta("peak_boost_psig"),
+        "peak_rpm": delta("peak_rpm"),
+        "afr_error": delta("afr_error"),
+        "min_differential_fuel_psi": delta("min_differential_fuel_psi"),
+        "max_knock_retard_deg": delta("max_knock_retard_deg"),
+        "max_injector_duty_pct": delta("max_injector_duty_pct"),
+        "afr_error_improved": _afr_trend(),
+    }
 
 
 class PostPullDetector:
@@ -849,7 +1055,7 @@ class PostPullDetector:
         else:
             verdict_parts.append(f"WOT AFR tracked {avg_afr:.2f} (Target {avg_target:.2f}) within ±2% steady target.")
 
-        return {
+        card = {
             "timestamp": time.time(),
             "duration_s": round(duration_s, 1),
             "peak_rpm": round(peak_rpm, 0),
@@ -876,7 +1082,10 @@ class PostPullDetector:
             "severity": severity,
             "verdict": " ".join(verdict_parts),
         }
-
+        alerts = build_safety_alerts(card)
+        card["safety_alerts"] = alerts
+        card["safety_level"] = worst_alert_level(alerts)
+        return card
 
 class AutoHandoffWatcher:
     """
@@ -900,6 +1109,11 @@ class AutoHandoffWatcher:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._seen_mtimes: Dict[str, float] = {}
+        # Files are only parsed once their size and mtime stop changing between polls, so a log
+        # that Holley software is still writing is never read half-finished.
+        self._last_stat: Dict[str, tuple] = {}
+        self._fail_counts: Dict[str, int] = {}
+        self.max_ingest_retries = 3
         self.handoff_mode: str = "initializing"
         self.last_auto_ingested_log: Optional[str] = None
 
@@ -910,6 +1124,9 @@ class AutoHandoffWatcher:
         files = discover_local_holley_files()
         for dl in files.get("datalogs", []):
             self._seen_mtimes[dl["path"]] = dl["modified"]
+        # Tunes already on disk at startup are baseline, not "new" - only later saves trigger an audit.
+        for tune in files.get("tunes", []):
+            self._seen_mtimes[tune["path"]] = tune["modified"]
 
         if files.get("datalogs") and self.ve_optimizer.total_samples_ingested == 0:
             latest = files["datalogs"][0]
@@ -939,6 +1156,11 @@ class AutoHandoffWatcher:
         if wot_rows:
             dur = wot_rows[-1].get("timestamp_s", 0.0) - wot_rows[0].get("timestamp_s", 0.0)
             scorecard = self.pull_detector.build_scorecard(wot_rows, duration_s=max(1.0, dur))
+            scorecard["log_name"] = Path(path).name
+            # Re-saving the same log replaces its scorecard instead of stacking duplicates.
+            self.pull_detector.recent_scorecards[:] = [
+                s for s in self.pull_detector.recent_scorecards if s.get("log_name") != scorecard["log_name"]
+            ]
             self.pull_detector.recent_scorecards.insert(0, scorecard)
             del self.pull_detector.recent_scorecards[10:]
 
@@ -949,6 +1171,17 @@ class AutoHandoffWatcher:
             "rows": len(rows),
             "scorecard": scorecard,
         }
+
+    def _is_stable(self, path: str) -> bool:
+        """True when the file's size/mtime are unchanged since the previous poll (write finished)."""
+        try:
+            st = Path(path).stat()
+        except OSError:
+            return False
+        sig = (st.st_size, st.st_mtime)
+        stable = self._last_stat.get(path) == sig and st.st_size > 0
+        self._last_stat[path] = sig
+        return stable
 
     async def _watch_loop(self) -> None:
         while self._running:
@@ -970,10 +1203,21 @@ class AutoHandoffWatcher:
                     mtime = dl["modified"]
                     prev_mtime = self._seen_mtimes.get(p)
                     if prev_mtime is None or mtime > prev_mtime + 0.5:
+                        if not self._is_stable(p):
+                            continue  # still being written; look again next poll
+                        try:
+                            result = self._ingest_file(p)
+                            parser = HolleyDatalogParser(p)
+                        except Exception as e:
+                            n = self._fail_counts.get(p, 0) + 1
+                            self._fail_counts[p] = n
+                            logger.warning("Datalog %s not readable yet (attempt %d): %s", dl["name"], n, e)
+                            if n >= self.max_ingest_retries:
+                                self._seen_mtimes[p] = mtime  # give up on this version of the file
+                            continue
+                        self._fail_counts.pop(p, None)
                         self._seen_mtimes[p] = mtime
-                        logger.info("Auto-ingesting updated Holley datalog: %s", dl["name"])
-                        result = self._ingest_file(p)
-                        parser = HolleyDatalogParser(p)
+                        logger.info("Auto-ingested Holley datalog: %s", dl["name"])
                         if hasattr(self.listener, "inject_decoded_frames"):
                             await self.listener.inject_decoded_frames(parser.to_decoded_frames())
                         if self.on_event_callback:
@@ -988,6 +1232,8 @@ class AutoHandoffWatcher:
                     mtime = tune["modified"]
                     prev_mtime = self._seen_mtimes.get(p)
                     if prev_mtime is None or mtime > prev_mtime + 0.5:
+                        if not self._is_stable(p):
+                            continue
                         self._seen_mtimes[p] = mtime
                         logger.info("Auto-detected Holley tune file: %s", tune["name"])
                         if self.on_event_callback:

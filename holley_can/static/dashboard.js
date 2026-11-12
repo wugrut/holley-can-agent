@@ -389,6 +389,75 @@ async function loadVEMatrix() {
     }
 }
 
+function renderSafetyBanner(alerts, level, source) {
+    const banner = document.getElementById('safety-banner');
+    if (!banner) return;
+    const list = document.getElementById('safety-banner-list');
+    const title = document.getElementById('safety-banner-title');
+    const icon = document.getElementById('safety-banner-icon');
+    const src = document.getElementById('safety-banner-source');
+
+    if (!alerts || alerts.length === 0) {
+        banner.classList.add('hidden');
+        banner.classList.remove('critical');
+        return;
+    }
+    const critical = level === 'critical';
+    banner.classList.remove('hidden');
+    banner.classList.toggle('critical', critical);
+    if (icon) icon.textContent = critical ? '🛑' : '⚠️';
+    if (title) title.textContent = critical ? 'CRITICAL SAFETY ALERT - DO NOT ADD BOOST OR TIMING' : 'SAFETY WARNING';
+    if (src) src.textContent = source ? `from ${source}` : '';
+    if (list) {
+        list.innerHTML = alerts
+            .map(a => `<li class="${a.level}">${escapeHtml(a.message)}</li>`)
+            .join('');
+    }
+}
+
+function renderComparison(data) {
+    const box = document.getElementById('compare-box');
+    if (!box) return;
+    const parts = [];
+
+    const pc = data.pull_comparison;
+    if (pc) {
+        const fmt = (v, unit, goodWhenNegative) => {
+            if (v === null || v === undefined) return null;
+            const cls = Math.abs(v) < 0.05 ? 'cmp-flat' : ((v < 0) === goodWhenNegative ? 'cmp-good' : 'cmp-bad');
+            return `<span class="${cls}">${v > 0 ? '+' : ''}${v.toFixed(unit === 'rpm' ? 0 : 1)}${unit === 'rpm' ? '' : ' ' + unit}</span>`;
+        };
+        const bits = [];
+        const boost = fmt(pc.peak_boost_psig, 'psi', false);
+        if (boost) bits.push(`Peak boost ${boost}`);
+        if (pc.afr_error !== null && pc.afr_error !== undefined) {
+            const cls = pc.afr_error_improved === true ? 'cmp-good' : (pc.afr_error_improved === false ? 'cmp-bad' : 'cmp-flat');
+            const label = pc.afr_error_improved === true ? 'closer to target' : (pc.afr_error_improved === false ? 'further from target' : 'about the same');
+            bits.push(`AFR error <span class="${cls}">${pc.afr_error > 0 ? '+' : ''}${pc.afr_error.toFixed(2)}</span> (${label})`);
+        }
+        const diff = fmt(pc.min_differential_fuel_psi, 'psi', false);
+        if (diff) bits.push(`Min fuel differential ${diff}`);
+        const knock = fmt(pc.max_knock_retard_deg, 'deg', true);
+        if (knock) bits.push(`Knock ${knock}`);
+        parts.push(`<strong>vs previous pull</strong> (${escapeHtml(pc.previous_log || 'previous')} → ${escapeHtml(pc.current_log || 'this')}): ${bits.join(' • ')}`);
+    }
+
+    const tc = data.comparison;
+    if (tc && tc.cells_compared > 0) {
+        const cls = tc.trend === 'improving' ? 'cmp-good' : (tc.trend === 'worse' ? 'cmp-bad' : 'cmp-flat');
+        const label = tc.trend === 'improving' ? 'TABLE IMPROVING' : (tc.trend === 'worse' ? 'TABLE GOT WORSE' : 'NO CHANGE');
+        parts.push(`<span class="${cls}">${label}</span> ${escapeHtml(tc.summary)}`);
+    }
+
+    if (parts.length === 0) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+    }
+    box.innerHTML = parts.join('<br>');
+    box.classList.remove('hidden');
+}
+
 function renderVEMatrix(data) {
     if (!data) return;
     state.lastMatrixData = data;
@@ -398,72 +467,78 @@ function renderVEMatrix(data) {
     const cellsEl = document.getElementById('metric-cells');
     const leanEl = document.getElementById('metric-lean');
     const richEl = document.getElementById('metric-rich');
+    const lowEl = document.getElementById('metric-lowconf');
     const sourceEl = document.getElementById('metric-source');
+    const stepEl = document.getElementById('legend-step');
 
     if (samplesEl) samplesEl.textContent = (data.total_samples || 0).toLocaleString();
     if (cellsEl) cellsEl.textContent = `${data.cells_populated || 0} / 256`;
+    if (lowEl) lowEl.textContent = data.low_confidence_cells || 0;
+    if (stepEl && data.max_step_pct !== undefined) stepEl.textContent = data.max_step_pct;
     if (sourceEl) sourceEl.textContent = data.last_source || 'Documents\\Holley';
 
-    // Count lean/rich trims
     let leanCount = 0;
     let richCount = 0;
 
-    // 2. Render Scorecard Banner
+    // 2. Safety banner + scorecard (scorecards are newest-first)
     const scorecards = data.scorecards || [];
+    const latest = scorecards.length > 0 ? scorecards[0] : null;
+    renderSafetyBanner(data.safety_alerts || [], data.safety_level, latest ? latest.log_name : '');
+    renderComparison(data);
+
     const verdictEl = document.getElementById('scorecard-verdict');
     const badgeEl = document.getElementById('scorecard-badge');
     const detailsEl = document.getElementById('scorecard-details');
 
-    if (scorecards.length > 0) {
-        const latest = scorecards[scorecards.length - 1];
+    if (latest) {
         if (verdictEl) verdictEl.textContent = latest.verdict || 'PULL COMPLETED';
         if (badgeEl) {
-            badgeEl.textContent = `${latest.peak_boost_psi.toFixed(1)} PSI @ ${Math.round(latest.peak_rpm)} RPM`;
-            badgeEl.className = latest.severity === 'danger' ? 'badge danger' : 'badge';
+            badgeEl.textContent = `${latest.peak_boost_psig.toFixed(1)} PSI @ ${Math.round(latest.peak_rpm)} RPM`;
+            badgeEl.className = latest.severity === 'critical' ? 'badge danger' : 'badge';
         }
         if (detailsEl) {
             detailsEl.innerHTML = `
-                Avg AFR: <strong>${latest.avg_afr.toFixed(2)}</strong> (Target: ${latest.avg_target_afr.toFixed(2)}, Err: ${latest.afr_error > 0 ? '+' : ''}${latest.afr_error.toFixed(2)}) •
-                Min Fuel PSI: <strong>${latest.min_fuel_psi.toFixed(1)}</strong> (Delta: ${latest.min_delta_psi.toFixed(1)} PSI) •
-                Max Injector Duty: <strong>${latest.max_duty_pct.toFixed(1)}%</strong>
+                Avg AFR: <strong>${latest.avg_afr.toFixed(2)}</strong> (Target: ${latest.target_afr.toFixed(2)}, Err: ${latest.afr_error > 0 ? '+' : ''}${latest.afr_error.toFixed(2)}) •
+                Min Fuel PSI: <strong>${latest.min_fuel_pressure_psi.toFixed(1)}</strong> (Differential: ${latest.min_differential_fuel_psi.toFixed(1)} PSI) •
+                Max Injector Duty: <strong>${latest.max_injector_duty_pct.toFixed(1)}%</strong>
             `;
         }
     }
 
-    // 3. Render 16×16 Table
+    // 3. Render 16×16 table: RPM across the top, MAP down the side (highest MAP first, as in Holley's table)
     const thead = document.getElementById('ve-thead');
     const tbody = document.getElementById('ve-tbody');
-    const matrix = data.matrix || [];
+    const rows = data.rows || [];
+    if (rows.length === 0) return;
 
-    if (!matrix || matrix.length === 0) return;
-
-    // Render Table Header (MAP columns)
     if (thead) {
-        const firstRow = matrix[0];
-        let thHtml = '<tr><th>RPM \\ MAP</th>';
-        firstRow.cells.forEach(cell => {
-            const boostPsig = (cell.map_kpa - 101.325) * 0.145038;
-            const boostStr = boostPsig > 0.5 ? `<br><span style="color:#00e5ff;font-size:9px;">+${boostPsig.toFixed(1)}#</span>` : '';
-            thHtml += `<th>${cell.map_kpa}k${boostStr}</th>`;
+        let thHtml = '<tr><th>MAP \\ RPM</th>';
+        rows[0].cells.forEach(cell => {
+            thHtml += `<th>${cell.rpm}</th>`;
         });
         thHtml += '</tr>';
         thead.innerHTML = thHtml;
     }
 
-    // Render Table Body (RPM rows)
     if (tbody) {
         let trHtml = '';
-        matrix.forEach((row, rIdx) => {
-            trHtml += `<tr><th>${row.rpm}</th>`;
-            row.cells.forEach((cell, cIdx) => {
+        rows.forEach(row => {
+            const boost = row.boost_psig > 0.4 ? `<br><span style="color:#00e5ff;font-size:9px;">+${row.boost_psig.toFixed(1)}#</span>` : '';
+            trHtml += `<tr><th>${row.map_kpa}k${boost}</th>`;
+            row.cells.forEach(cell => {
                 const hits = cell.hits || 0;
                 const corr = cell.correction_pct || 0;
-                const sug = cell.suggested_ve !== undefined ? cell.suggested_ve : cell.base_ve;
+                const raw = cell.raw_correction_pct !== undefined ? cell.raw_correction_pct : corr;
+                const rec = cell.recommended_ve;
+                const conf = cell.confidence || 'none';
 
                 let cellClass = 've-cell nodata';
                 let corrText = '';
 
-                if (hits >= 2) {
+                if (hits > 0 && conf === 'low') {
+                    cellClass = 've-cell nodata lowconf';
+                    corrText = `<span class="ve-corr" style="color:#a0aec0;">n=${hits}</span>`;
+                } else if (hits > 0) {
                     if (corr > 0.8) {
                         cellClass = 've-cell lean';
                         corrText = `<span class="ve-corr">+${corr.toFixed(1)}%</span>`;
@@ -476,19 +551,27 @@ function renderVEMatrix(data) {
                         cellClass = 've-cell ok';
                         corrText = `<span class="ve-corr" style="color:#a0aec0;">0.0%</span>`;
                     }
+                    if (cell.limited) cellClass += ' capped';
                 }
 
                 trHtml += `
                     <td class="${cellClass}"
-                        data-rpm="${row.rpm}"
+                        data-rpm="${cell.rpm}"
                         data-map="${cell.map_kpa}"
                         data-base="${cell.base_ve}"
-                        data-sug="${sug}"
+                        data-sug="${rec}"
                         data-corr="${corr.toFixed(2)}"
+                        data-raw="${raw.toFixed(2)}"
+                        data-limited="${cell.limited ? 1 : 0}"
+                        data-conf="${conf}"
                         data-hits="${hits}"
-                        data-cl="${(cell.cl_comp || 0).toFixed(1)}"
-                        data-learn="${(cell.learn || 0).toFixed(1)}">
-                        <span class="ve-val">${Math.round(sug)}</span>
+                        data-afr="${cell.afr_avg === null || cell.afr_avg === undefined ? '' : cell.afr_avg}"
+                        data-tafr="${cell.target_afr === null || cell.target_afr === undefined ? '' : cell.target_afr}"
+                        data-fp="${cell.diff_fuel_psi === undefined ? '' : cell.diff_fuel_psi}"
+                        data-knock="${cell.knock_deg || 0}"
+                        data-cl="${(cell.cl_comp_pct || 0).toFixed(1)}"
+                        data-learn="${(cell.learn_pct || 0).toFixed(1)}">
+                        <span class="ve-val">${Math.round(rec)}</span>
                         ${corrText}
                     </td>
                 `;
@@ -508,26 +591,31 @@ function initCellTooltips() {
     const cells = document.querySelectorAll('.ve-cell');
 
     cells.forEach(c => {
-        c.addEventListener('mouseenter', (e) => {
+        c.addEventListener('mouseenter', () => {
             if (!tooltip) return;
-            const rpm = c.getAttribute('data-rpm');
-            const map = c.getAttribute('data-map');
-            const base = c.getAttribute('data-base');
-            const sug = c.getAttribute('data-sug');
-            const corr = c.getAttribute('data-corr');
-            const hits = c.getAttribute('data-hits');
-            const cl = c.getAttribute('data-cl');
-            const learn = c.getAttribute('data-learn');
+            const g = (k) => c.getAttribute(k);
+            const hits = parseInt(g('data-hits'), 10) || 0;
+            const conf = g('data-conf');
+            const boostPsig = Math.max(0, (parseFloat(g('data-map')) - 101.325) * 0.145038);
+            const confLabel = { none: 'no data', low: 'LOW - held at 0%', medium: 'medium', high: 'high' }[conf] || conf;
 
-            const boostPsig = Math.max(0, (parseFloat(map) - 101.325) * 0.145038);
-
-            tooltip.innerHTML = `
-                <div style="font-weight:700; color:#00e5ff; margin-bottom:4px;">${rpm} RPM @ ${map} kPa (${boostPsig.toFixed(1)} PSI Boost)</div>
-                <div>Suggested VE: <strong style="color:#00e676;">${sug}%</strong> (Base: ${base}%)</div>
-                <div>Trim Correction: <strong>${corr}%</strong></div>
-                <div>Closed-Loop: <strong>${cl}%</strong> • Learn: <strong>${learn}%</strong></div>
-                <div>Steady-State Samples: <strong>${hits}</strong></div>
-            `;
+            let html = `<div style="font-weight:700; color:#00e5ff; margin-bottom:4px;">${g('data-rpm')} RPM @ ${g('data-map')} kPa (${boostPsig.toFixed(1)} PSI Boost)</div>`;
+            if (hits === 0) {
+                html += `<div>No steady-state samples in this cell.</div>`;
+            } else {
+                html += `<div>Recommended VE: <strong style="color:#00e676;">${g('data-sug')}%</strong> (Base: ${g('data-base')}%)</div>`;
+                html += `<div>Applied change: <strong>${g('data-corr')}%</strong>`;
+                if (g('data-limited') === '1') {
+                    html += ` <span style="color:#ffb300;">(capped; measured error is ${g('data-raw')}% - do another pass)</span>`;
+                }
+                html += `</div>`;
+                if (g('data-afr')) html += `<div>AFR: <strong>${g('data-afr')}</strong> vs target ${g('data-tafr')}</div>`;
+                html += `<div>Closed-Loop: <strong>${g('data-cl')}%</strong> • Learn: <strong>${g('data-learn')}%</strong></div>`;
+                if (g('data-fp') !== '') html += `<div>Fuel differential: <strong>${g('data-fp')} PSI</strong> (target 58)</div>`;
+                if (parseFloat(g('data-knock')) > 0) html += `<div style="color:#ff8a80;">Knock retard: <strong>${g('data-knock')}°</strong></div>`;
+                html += `<div>Samples: <strong>${hits}</strong> • Confidence: <strong>${confLabel}</strong></div>`;
+            }
+            tooltip.innerHTML = html;
             tooltip.classList.remove('hidden');
         });
 
@@ -550,12 +638,21 @@ async function copyVEToClipboard(type = 've') {
     }
 
     const tsv = type === 've'
-        ? state.lastMatrixData.tsv_clipboard
-        : state.lastMatrixData.tsv_corrections_clipboard;
+        ? state.lastMatrixData.holley_tsv_ve
+        : state.lastMatrixData.holley_tsv_correction_pct;
 
     if (!tsv) {
         alert('Clipboard data empty.');
         return;
+    }
+
+    if (type === 've' && state.lastMatrixData.safety_level === 'critical') {
+        const proceed = confirm(
+            'CRITICAL SAFETY ALERT on the latest pull (see red banner).\n\n' +
+            'Fix the safety issue first - for example, never add VE while fuel pressure is sagging.\n\n' +
+            'Copy the VE table anyway?'
+        );
+        if (!proceed) return;
     }
 
     try {
@@ -621,7 +718,7 @@ function initWebSocket() {
                     const metaEl = document.getElementById('active-log-meta');
                     if (nameEl) nameEl.textContent = `📄 ${msg.log_name}`;
                     if (metaEl && msg.scorecard) {
-                        metaEl.textContent = `Auto-Ingested • Peak Boost: ${msg.scorecard.peak_boost_psi.toFixed(1)} PSI @ ${Math.round(msg.scorecard.peak_rpm)} RPM`;
+                        metaEl.textContent = `Auto-Ingested • Peak Boost: ${msg.scorecard.peak_boost_psig.toFixed(1)} PSI @ ${Math.round(msg.scorecard.peak_rpm)} RPM`;
                     }
                     showToast(`🏁 New Pass Auto-Ingested: ${msg.log_name} (VE Table Ready!)`);
 
@@ -630,15 +727,23 @@ function initWebSocket() {
                         appendAutoPilotMessage(msg.log_name, msg.gemini_answer, msg.scorecard);
                     }
 
-                    // Optional Audible Speech Announcement
+                    // Audible announcement - driven by the actual safety alerts, never assumed safe
                     if (window.speechSynthesis) {
                         try {
                             const sc = msg.scorecard;
-                            const text = sc
-                                ? `New pass ingested. ${sc.peak_boost_psi.toFixed(1)} PSI boost. Fuel pressure differential held safe. Updated VE table ready to paste.`
-                                : 'New pass ingested. Updated VE table ready to paste.';
+                            const alerts = msg.safety_alerts || [];
+                            let text;
+                            if (alerts.length > 0) {
+                                const first = alerts[0].message.split('. ')[0];
+                                text = `${msg.safety_level === 'critical' ? 'Critical safety alert' : 'Warning'}. ${first}.`;
+                            } else if (sc) {
+                                text = `New pass ingested. ${sc.peak_boost_psig.toFixed(1)} PSI boost. No safety alerts. Updated VE table ready to paste.`;
+                            } else {
+                                text = 'New pass ingested. Updated VE table ready to paste.';
+                            }
                             const utter = new SpeechSynthesisUtterance(text);
                             utter.rate = 1.05;
+                            window.speechSynthesis.cancel();
                             window.speechSynthesis.speak(utter);
                         } catch (sErr) {}
                     }
@@ -680,7 +785,7 @@ function appendAutoPilotMessage(logName, answerText, scorecard) {
 
     let headerBadge = '';
     if (scorecard) {
-        headerBadge = `<span class="badge" style="margin-left:8px;background:rgba(0,230,118,0.15);color:#00e676;">Peak ${scorecard.peak_boost_psi.toFixed(1)} PSI</span>`;
+        headerBadge = `<span class="badge" style="margin-left:8px;background:rgba(0,230,118,0.15);color:#00e676;">Peak ${scorecard.peak_boost_psig.toFixed(1)} PSI</span>`;
     }
 
     msg.innerHTML = `
