@@ -155,3 +155,4 @@ In both native 0x1E broadcast frames and RPC monitor records, the second 32-bit 
 | **`0x088` (136)** | `trans_brake_status`| Status | `tb_status` | Transbrake / Staging Solenoid State |
 | **`0x0DB` (219)** | `trans_gear` | Gear | `gear_status` | 4L80E Commanded Transmission Gear |
 | **`0x0DE` (222)** | `input_speed` | RPM | `iss_status` | 4L80E Torque Converter Input Speed |
+

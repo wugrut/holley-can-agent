@@ -21,6 +21,14 @@
                     <span class="logo-subtitle">1980 Ford Fairmont 4.8L Turbo LS • Terminator X MAX</span>
                 </div>
             </div>
+            <nav class="view-mode-tabs" role="tablist">
+                <button type="button" id="tab-btn-tuning" class="view-tab-btn active" role="tab" aria-selected="true" title="Switch to AI Calibration & VE Optimizer Studio">
+                    <span>🎯</span> <span>Tuning Studio</span>
+                </button>
+                <button type="button" id="tab-btn-live-dash" class="view-tab-btn" role="tab" aria-selected="false" title="Switch to Real-Time Customizable Digital HUD">
+                    <span>⚡</span> <span>Live Digital HUD</span>
+                </button>
+            </nav>
         </div>
 
         <div class="header-center">
@@ -78,7 +86,7 @@
     </div>
 
     <!-- Main Workspace (Two-Panel Layout) -->
-    <main class="main-workspace">
+    <main class="main-workspace" id="tuning-workspace">
         
         <!-- Left Panel: Gemini AI Tuner & Explanation Co-Driver -->
         <section class="panel copilot-panel">
@@ -301,6 +309,56 @@
 
     </main>
 
+    <!-- Live Digital Dashboard Workspace (Full HUD) -->
+    <section id="live-dashboard-view" class="live-dashboard-workspace hidden">
+        <!-- Live Dash Toolbar -->
+        <div class="live-dash-toolbar">
+            <div class="dash-toolbar-left">
+                <span class="toolbar-label">PRESET:</span>
+                <div class="preset-pill-group" id="dash-preset-selector">
+                    <button type="button" class="preset-pill active" data-preset="drag" title="Staging & WOT: Tachometer, Boost, Fuel Rail Delta, 4L80E Slip, Transbrake">🏁 Drag Strip</button>
+                    <button type="button" class="preset-pill" data-preset="street" title="Cruising: RPM, Speed MPH, Coolant, Oil, Trans Temp, Battery">🚗 Street Cruiser</button>
+                    <button type="button" class="preset-pill" data-preset="dyno" title="Fuel & Spark Tuning: MAP, AFR Bank 1 & 2 vs Target, Closed Loop %, Learn %, Duty Cycle">🎯 Dyno / Tuning</button>
+                    <button type="button" class="preset-pill" data-preset="diagnostics" title="Circuit Health: Live sensor voltages & hardware fault status badges">🩺 Sensor Health</button>
+                    <button type="button" class="preset-pill" data-preset="custom" title="User customized layout persisted in browser storage">⚙️ Custom</button>
+                </div>
+            </div>
+            <div class="dash-toolbar-center">
+                <div id="can-rate-pill" class="status-pill watcher" title="Live CAN Telemetry Frame Rate">
+                    <span class="status-dot green"></span>
+                    <span id="can-rate-text">CAN 0 fps</span>
+                </div>
+                <div id="active-layout-badge" class="badge" style="background: rgba(0, 229, 255, 0.12); color: var(--accent-cyan); border: 1px solid rgba(0, 229, 255, 0.3);">
+                    8 Gauges Loaded
+                </div>
+            </div>
+            <div class="dash-toolbar-right">
+                <button type="button" id="btn-add-gauge" class="header-btn secondary-btn" title="Add a new live gauge from 86 reverse-engineered channels">
+                    <span>➕</span> <span>Add Gauge</span>
+                </button>
+                <button type="button" id="btn-toggle-edit-mode" class="header-btn secondary-btn" title="Toggle edit mode to rearrange or delete gauges">
+                    <span>✏️</span> <span id="lbl-edit-mode">Edit Layout</span>
+                </button>
+                <button type="button" id="btn-save-dash-layout" class="header-btn cta-btn" title="Save current gauge layout as Custom Preset">
+                    <span>💾</span> <span>Save Custom</span>
+                </button>
+                <button type="button" id="btn-reset-dash-layout" class="header-btn icon-btn" title="Reset layout to preset defaults">
+                    <span>🔄</span>
+                </button>
+                <button type="button" id="btn-dash-fullscreen" class="header-btn icon-btn" title="Toggle Fullscreen for Cockpit / Trackside Display">
+                    <span>⛶</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- The Responsive Gauge Grid -->
+        <div class="gauge-grid-container" id="gauge-grid-container">
+            <div id="gauge-grid" class="gauge-grid">
+                <!-- Dynamically populated by dashboard.js -->
+            </div>
+        </div>
+    </section>
+
     <!-- Cell Detail Tooltip Popup -->
     <div id="cell-tooltip" class="cell-tooltip hidden"></div>
 
@@ -359,6 +417,93 @@
         </div>
     </div>
 
-    <script src="/static/dashboard.js?v=3.2"></script>
+    <!-- Gauge Configuration / Add Gauge Modal -->
+    <div id="gauge-modal" class="cell-modal hidden">
+        <div class="cell-modal-backdrop" id="gauge-modal-backdrop"></div>
+        <div class="cell-modal-content" style="max-width: 580px;">
+            <div class="cell-modal-header">
+                <div class="cell-modal-title-group">
+                    <span class="modal-icon">⚙️</span>
+                    <h3 id="gauge-modal-title">Configure Live Gauge</h3>
+                </div>
+                <button type="button" id="btn-close-gauge-modal" class="modal-close-btn">&times;</button>
+            </div>
+            <form id="gauge-config-form" class="gauge-form-body">
+                <input type="hidden" id="cfg-gauge-edit-idx" value="-1">
+                
+                <div class="gauge-form-group">
+                    <label for="cfg-gauge-channel" class="cfg-label">CAN Telemetry Channel (86 Available)</label>
+                    <select id="cfg-gauge-channel" class="cfg-select" required>
+                        <!-- Populated by JS -->
+                    </select>
+                </div>
+
+                <div class="gauge-form-grid-2">
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-type" class="cfg-label">Visual Display Style</label>
+                        <select id="cfg-gauge-type" class="cfg-select">
+                            <option value="dial">Radial Swept Dial</option>
+                            <option value="bar">Linear Level Bar</option>
+                            <option value="stat">Digital Stat Box</option>
+                            <option value="chart">Rolling Sparkline Waveform</option>
+                        </select>
+                    </div>
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-size" class="cfg-label">Tile Grid Span</label>
+                        <select id="cfg-gauge-size" class="cfg-select">
+                            <option value="normal">Standard (1×1)</option>
+                            <option value="wide">Wide (2×1)</option>
+                            <option value="large">Hero Large (2×2)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="gauge-form-group">
+                    <label for="cfg-gauge-label" class="cfg-label">Custom Display Label (optional)</label>
+                    <input type="text" id="cfg-gauge-label" class="cfg-input" placeholder="e.g. BOOST PRESSURE">
+                </div>
+
+                <div class="gauge-form-grid-2">
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-min" class="cfg-label">Scale Min</label>
+                        <input type="number" step="any" id="cfg-gauge-min" class="cfg-input" placeholder="0">
+                    </div>
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-max" class="cfg-label">Scale Max</label>
+                        <input type="number" step="any" id="cfg-gauge-max" class="cfg-input" placeholder="100">
+                    </div>
+                </div>
+
+                <div class="gauge-form-grid-2">
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-warn" class="cfg-label">Warn Threshold (Yellow)</label>
+                        <input type="number" step="any" id="cfg-gauge-warn" class="cfg-input" placeholder="Optional threshold">
+                    </div>
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-danger" class="cfg-label">Danger / Redline (Red)</label>
+                        <input type="number" step="any" id="cfg-gauge-danger" class="cfg-input" placeholder="Optional threshold">
+                    </div>
+                </div>
+
+                <div class="gauge-form-grid-2">
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-target" class="cfg-label">Target Marker</label>
+                        <input type="number" step="any" id="cfg-gauge-target" class="cfg-input" placeholder="e.g. 58 (PSI) or 11.8 (AFR)">
+                    </div>
+                    <div class="gauge-form-group">
+                        <label for="cfg-gauge-unit" class="cfg-label">Unit Override</label>
+                        <input type="text" id="cfg-gauge-unit" class="cfg-input" placeholder="e.g. PSI, °F, RPM">
+                    </div>
+                </div>
+
+                <div class="cell-modal-footer" style="padding-left:0; padding-right:0; margin-top:16px;">
+                    <button type="submit" id="btn-save-gauge-cfg" class="header-btn cta-btn">Save Gauge</button>
+                    <button type="button" id="btn-cancel-gauge-cfg" class="header-btn secondary-btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/dashboard.js?v=3.3"></script>
 </body>
 </html>

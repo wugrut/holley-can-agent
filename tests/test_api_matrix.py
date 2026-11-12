@@ -43,3 +43,16 @@ def test_matrix_endpoint_serves_ui_contract():
         assert disc_res["status"] == "success"
         assert "calibrations" in disc_res
         assert isinstance(disc_res["calibrations"], list)
+
+        # Test Channels Catalog API for customizable live dashboard
+        cat_res = client.get("/api/channels/catalog")
+        assert cat_res.status_code == 200
+        cat_data = cat_res.json()
+        assert cat_data["total"] == 86
+        assert len(cat_data["channels"]) == 86
+        names = [ch["name"] for ch in cat_data["channels"]]
+        assert "rpm" in names
+        assert "boost_psig" in names
+        assert "fuel_pressure" in names
+        assert "knock_retard" in names
+        assert "trans_temp" in names

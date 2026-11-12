@@ -1136,3 +1136,497 @@ body {
     background: var(--bg-panel-header);
     border-top: 1px solid var(--border-color);
 }
+
+/* =============================================================================
+   View Mode Tabs (Tuning Studio vs Live Digital HUD)
+   ============================================================================= */
+
+.view-mode-tabs {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 4px;
+    margin-left: 18px;
+}
+
+.view-tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.view-tab-btn:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.view-tab-btn.active {
+    color: #0b0f14;
+    background: var(--accent-cyan);
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.35);
+    font-weight: 700;
+}
+
+/* =============================================================================
+   Live Digital Dashboard Workspace
+   ============================================================================= */
+
+.live-dashboard-workspace {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    height: calc(100vh - 60px);
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 20%, #0d1527 0%, #080c14 100%);
+}
+
+.live-dash-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: rgba(13, 21, 36, 0.9);
+    border-bottom: 1px solid var(--border-color);
+    backdrop-filter: blur(8px);
+    z-index: 10;
+}
+
+.dash-toolbar-left,
+.dash-toolbar-center,
+.dash-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.toolbar-label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+}
+
+.preset-pill-group {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 4px;
+}
+
+.preset-pill {
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.preset-pill:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.preset-pill.active {
+    background: rgba(0, 229, 255, 0.18);
+    color: var(--accent-cyan);
+    border: 1px solid rgba(0, 229, 255, 0.4);
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.2);
+    font-weight: 700;
+}
+
+/* =============================================================================
+   Gauge Grid Container
+   ============================================================================= */
+
+.gauge-grid-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+}
+
+.gauge-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    grid-auto-flow: dense;
+    align-items: stretch;
+}
+
+/* Responsive Grid Spans */
+.dash-gauge-card {
+    background: linear-gradient(145deg, #0e172a 0%, #0a0f1c 100%);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    min-height: 180px;
+}
+
+.dash-gauge-card:hover {
+    border-color: rgba(0, 229, 255, 0.35);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 229, 255, 0.15);
+}
+
+.dash-gauge-card.gauge-normal {
+    grid-column: span 1;
+    min-height: 180px;
+}
+
+.dash-gauge-card.gauge-wide {
+    grid-column: span 2;
+    min-height: 180px;
+}
+
+.dash-gauge-card.gauge-large {
+    grid-column: span 2;
+    grid-row: span 2;
+    min-height: 380px;
+}
+
+/* Shift light / redline warning banner overlay */
+.dash-gauge-card.danger-pulse {
+    animation: dangerGlow 0.5s infinite alternate;
+}
+
+@keyframes dangerGlow {
+    from {
+        border-color: rgba(255, 23, 68, 0.4);
+        box-shadow: 0 0 10px rgba(255, 23, 68, 0.2);
+    }
+    to {
+        border-color: rgba(255, 23, 68, 0.95);
+        box-shadow: 0 0 25px rgba(255, 23, 68, 0.6);
+    }
+}
+
+/* Edit Mode styling */
+.edit-mode-active .dash-gauge-card {
+    border: 1px dashed var(--accent-orange) !important;
+}
+
+.gauge-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px 6px 14px;
+    z-index: 2;
+}
+
+.gauge-title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+}
+
+.gauge-title {
+    font-family: var(--font-heading);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+.gauge-fault-badge {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.gauge-fault-badge.healthy {
+    display: none;
+}
+
+.gauge-fault-badge.fault {
+    background: rgba(255, 23, 68, 0.2);
+    color: #ff1744;
+    border: 1px solid rgba(255, 23, 68, 0.6);
+    animation: pulseFault 1s infinite alternate;
+}
+
+@keyframes pulseFault {
+    from { opacity: 0.7; }
+    to { opacity: 1; }
+}
+
+.gauge-actions {
+    display: none;
+    align-items: center;
+    gap: 4px;
+}
+
+.dash-gauge-card:hover .gauge-actions,
+.edit-mode-active .gauge-actions {
+    display: flex;
+}
+
+.gauge-action-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    font-size: 11px;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.gauge-action-btn:hover {
+    color: #fff;
+    background: rgba(0, 229, 255, 0.3);
+    border-color: var(--accent-cyan);
+}
+
+.gauge-action-btn.btn-del:hover {
+    background: rgba(255, 23, 68, 0.3);
+    border-color: #ff1744;
+}
+
+/* =============================================================================
+   Gauge Visual Types: Dial, Bar, Stat, Chart
+   ============================================================================= */
+
+.gauge-card-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 8px 14px 12px 14px;
+}
+
+/* 1. Radial Dial Canvas */
+.gauge-dial-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* 2. Linear Level Bar */
+.gauge-bar-wrapper {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px 0;
+}
+
+.gauge-bar-numeric {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.gauge-bar-val {
+    font-family: var(--font-heading);
+    font-size: 28px;
+    font-weight: 800;
+    color: #fff;
+    line-height: 1;
+}
+
+.gauge-bar-unit {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+}
+
+.gauge-bar-track {
+    width: 100%;
+    height: 14px;
+    background: #060910;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    position: relative;
+    overflow: hidden;
+}
+
+.gauge-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-cyan) 0%, var(--accent-green) 100%);
+    border-radius: 7px;
+    transition: width 0.08s ease, background-color 0.15s ease;
+}
+
+.gauge-bar-target-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #ffffff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+    z-index: 3;
+}
+
+.gauge-bar-scale-labels {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+/* 3. Digital Stat Box */
+.gauge-stat-box {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.stat-big-val {
+    font-family: var(--font-heading);
+    font-size: 42px;
+    font-weight: 900;
+    color: #ffffff;
+    line-height: 1.05;
+    letter-spacing: -1px;
+    text-shadow: 0 0 16px rgba(0, 229, 255, 0.25);
+    tabular-nums: true;
+}
+
+.stat-unit-line {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    margin-top: 4px;
+}
+
+.stat-subline {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 8px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+}
+
+/* 4. Live Rolling Chart Canvas */
+.gauge-chart-canvas {
+    width: 100%;
+    height: 100%;
+    min-height: 100px;
+    display: block;
+}
+
+.gauge-chart-stat-overlay {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    font-family: var(--font-heading);
+    font-size: 20px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+}
+
+/* =============================================================================
+   Gauge Configuration Form / Modal
+   ============================================================================= */
+
+.gauge-form-body {
+    padding: 16px 20px 8px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.gauge-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.gauge-form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.cfg-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.cfg-input,
+.cfg-select {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color 0.15s ease;
+    width: 100%;
+}
+
+.cfg-input:focus,
+.cfg-select:focus {
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.25);
+}
+
+.cfg-select optgroup {
+    background: #0d1524;
+    color: var(--accent-cyan);
+    font-weight: 700;
+}
+
+.cfg-select option {
+    background: #0d1524;
+    color: #f1f5f9;
+}

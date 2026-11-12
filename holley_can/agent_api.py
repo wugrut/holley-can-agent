@@ -28,7 +28,7 @@ from .alerts import Alert, AlertEngine
 from .copilot_service import CopilotService
 from .gemini_agent import GeminiAgent, GENAI_AVAILABLE
 from .listener import CANListener
-from .protocol import DecodedFrame
+from .protocol import DecodedFrame, CHANNEL_MAP, decode_sensor_status_flags
 from .storage import TimeSeriesStorage
 from .tune_optimizer import (
     AutoHandoffWatcher,
@@ -83,6 +83,7 @@ class DashboardBroadcaster:
             "unit": frame.unit,
             "value": round(frame.value_a, 3),
             "value_b": round(frame.value_b, 3),
+            "circuit_fault": decode_sensor_status_flags(frame.value_b) if frame.value_b else {"healthy": True},
             "timestamp": frame.timestamp,
         }
 
@@ -442,6 +443,24 @@ def create_app(
                 for name, info in snapshot.items()
             ]
         }
+
+    @app.get("/api/channels/catalog")
+    async def get_channels_catalog():
+        """Returns all 86 reverse-engineered Holley CAN channels with categories and units."""
+        channels = []
+        for index, ch in sorted(CHANNEL_MAP.items(), key=lambda x: (x[1].category.name, x[1].label)):
+            channels.append({
+                "index": ch.index,
+                "name": ch.name,
+                "label": ch.label,
+                "unit": ch.unit,
+                "category": ch.category.name,
+                "min_val": ch.min_val,
+                "max_val": ch.max_val,
+                "value_b_name": ch.value_b_name,
+                "value_b_label": ch.value_b_label,
+            })
+        return {"total": len(channels), "channels": channels}
 
     # ── Hardware Diagnostics & Transceiver API ──────────────────────────
 

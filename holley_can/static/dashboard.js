@@ -12,6 +12,17 @@ const state = {
     lastMatrixData: null,
     selectedCell: null,
     wsConnected: false,
+    activeView: 'tuning',
+    dashPreset: localStorage.getItem('holley_dash_active_preset') || 'drag',
+    dashLayout: [],
+    dashEditMode: false,
+    channelCatalog: [],
+    liveValues: {},
+    gaugePeaks: {},
+    historyBuffers: {},
+    canPktCount: 0,
+    canLastFpsTime: Date.now(),
+    canFps: 0,
 };
 
 // ─── Initialization ──────────────────────────────────────────────────────────
@@ -24,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initCellModal();
     initDropzone();
     initWebSocket();
+    initLiveDashboard();
     checkCopilotStatus();
     updateWatcherStatus();
 });
@@ -1194,6 +1206,11 @@ function initWebSocket() {
                 else if (msg.alerts && msg.alerts.some(a => a.alert_type === 'post_pull_scorecard')) {
                     loadVEMatrix();
                 }
+
+                // 4. Live CAN Telemetry Stream (Updates customizable gauges & circuit health)
+                else if (msg.type === 'update' && msg.channels) {
+                    handleLiveCANUpdate(msg);
+                }
             } catch (err) {
                 // Ignore parse errors on ping/pong
             }
@@ -1302,3 +1319,779 @@ function escapeHtml(str) {
         '"': '&quot;',
     }[tag] || tag));
 }
+
+// =============================================================================
+// Customizable Live Digital HUD & CAN Telemetry Engine
+// Target: 1980 Ford Fairmont 4.8L Turbo LS (Terminator X MAX)
+// =============================================================================
+
+const DASHBOARD_PRESETS = {
+    drag: [
+        { id: 'rpm', channel: 'rpm', type: 'dial', size: 'large', label: 'ENGINE RPM', min: 0, max: 8000, warn: 6200, danger: 6600, unit: 'RPM' },
+        { id: 'boost_psig', channel: 'boost_psig', type: 'dial', size: 'large', label: 'BOOST PRESSURE', min: 0, max: 30, warn: 20, danger: 25, unit: 'PSIG' },
+        { id: 'fuel_pressure', channel: 'fuel_pressure', type: 'bar', size: 'wide', label: 'FUEL RAIL PRESSURE', min: 0, max: 100, target: 58, warn: 45, danger: 40, unit: 'PSI' },
+        { id: 'afr_avg', channel: 'afr_avg', type: 'bar', size: 'wide', label: 'WIDEBAND AFR (AVG)', min: 9.0, max: 18.0, target: 11.8, warn: 12.8, danger: 13.5, unit: 'AFR' },
+        { id: 'staging_input_1', channel: 'staging_input_1', type: 'stat', size: 'normal', label: 'TRANSBRAKE / STAGING', unit: 'STATUS' },
+        { id: 'input_speed', channel: 'input_speed', type: 'stat', size: 'normal', label: '4L80E INPUT RPM', unit: 'RPM' },
+        { id: 'knock_retard', channel: 'knock_retard', type: 'chart', size: 'wide', label: 'KNOCK RETARD TRACE', min: 0, max: 10, warn: 2, danger: 4, unit: '°' },
+        { id: 'oil_pressure', channel: 'oil_pressure', type: 'stat', size: 'normal', label: 'OIL PRESSURE', min: 0, max: 100, warn: 30, danger: 20, unit: 'PSI' },
+        { id: 'coolant_temp', channel: 'coolant_temp', type: 'stat', size: 'normal', label: 'COOLANT TEMP', min: 100, max: 250, warn: 215, danger: 230, unit: '°F' },
+        { id: 'trans_temp', channel: 'trans_temp', type: 'stat', size: 'normal', label: '4L80E TRANS TEMP', min: 100, max: 260, warn: 210, danger: 235, unit: '°F' }
+    ],
+    street: [
+        { id: 'rpm', channel: 'rpm', type: 'dial', size: 'large', label: 'ENGINE RPM', min: 0, max: 7000, warn: 6000, danger: 6500, unit: 'RPM' },
+        { id: 'vehicle_speed', channel: 'vehicle_speed', type: 'dial', size: 'large', label: 'VEHICLE SPEED', min: 0, max: 140, warn: 80, danger: 120, unit: 'MPH' },
+        { id: 'coolant_temp', channel: 'coolant_temp', type: 'dial', size: 'normal', label: 'COOLANT TEMP', min: 100, max: 250, warn: 215, danger: 230, unit: '°F' },
+        { id: 'oil_pressure', channel: 'oil_pressure', type: 'dial', size: 'normal', label: 'OIL PRESSURE', min: 0, max: 100, warn: 30, danger: 20, unit: 'PSI' },
+        { id: 'afr_avg', channel: 'afr_avg', type: 'bar', size: 'wide', label: 'WIDEBAND AFR', min: 10, max: 18, target: 14.7, warn: 16.0, danger: 17.0, unit: 'AFR' },
+        { id: 'trans_gear', channel: 'trans_gear', type: 'stat', size: 'normal', label: '4L80E CURRENT GEAR', unit: 'GEAR' },
+        { id: 'battery_volt', channel: 'battery_volt', type: 'stat', size: 'normal', label: 'BATTERY VOLTAGE', min: 10, max: 16, warn: 12.0, danger: 11.5, unit: 'V' },
+        { id: 'trans_temp', channel: 'trans_temp', type: 'stat', size: 'normal', label: 'TRANS FLUID TEMP', min: 100, max: 260, warn: 210, danger: 235, unit: '°F' },
+        { id: 'mat', channel: 'mat', type: 'stat', size: 'normal', label: 'MANIFOLD AIR TEMP', min: 50, max: 200, warn: 140, danger: 160, unit: '°F' }
+    ],
+    dyno: [
+        { id: 'map_kpa', channel: 'map_kpa', type: 'dial', size: 'large', label: 'MAP PRESSURE', min: 0, max: 300, target: 101, warn: 200, danger: 250, unit: 'kPa' },
+        { id: 'rpm', channel: 'rpm', type: 'dial', size: 'large', label: 'ENGINE RPM', min: 0, max: 8000, warn: 6200, danger: 6600, unit: 'RPM' },
+        { id: 'afr_left', channel: 'afr_left', type: 'bar', size: 'wide', label: 'AFR BANK 1', min: 9.0, max: 18.0, target: 11.8, warn: 12.8, danger: 13.5, unit: 'AFR' },
+        { id: 'afr_right', channel: 'afr_right', type: 'bar', size: 'wide', label: 'AFR BANK 2', min: 9.0, max: 18.0, target: 11.8, warn: 12.8, danger: 13.5, unit: 'AFR' },
+        { id: 'closed_loop_comp', channel: 'closed_loop_comp', type: 'bar', size: 'wide', label: 'CLOSED LOOP COMP %', min: -30, max: 30, target: 0, warn: 15, danger: 25, unit: '%' },
+        { id: 'current_learn', channel: 'current_learn', type: 'bar', size: 'wide', label: 'FUEL LEARN %', min: -30, max: 30, target: 0, warn: 15, danger: 25, unit: '%' },
+        { id: 'injector_duty', channel: 'injector_duty', type: 'chart', size: 'wide', label: 'INJECTOR DUTY CYCLE', min: 0, max: 100, warn: 80, danger: 90, unit: '%' },
+        { id: 'timing', channel: 'timing', type: 'stat', size: 'normal', label: 'TOTAL IGNITION TIMING', unit: '°BTDC' },
+        { id: 'knock_retard', channel: 'knock_retard', type: 'stat', size: 'normal', label: 'KNOCK RETARD', min: 0, max: 12, warn: 2, danger: 4, unit: '°' }
+    ],
+    diagnostics: [
+        { id: 'diag_tps', channel: 'tps', type: 'bar', size: 'wide', label: 'THROTTLE POSITION (TPS)', min: 0, max: 100, unit: '%' },
+        { id: 'diag_map', channel: 'map_kpa', type: 'bar', size: 'wide', label: 'MANIFOLD PRESSURE (MAP)', min: 0, max: 300, unit: 'kPa' },
+        { id: 'diag_clt', channel: 'coolant_temp', type: 'bar', size: 'wide', label: 'COOLANT TEMP SENSOR', min: -40, max: 260, unit: '°F' },
+        { id: 'diag_mat', channel: 'mat', type: 'bar', size: 'wide', label: 'MANIFOLD AIR TEMP (MAT)', min: -40, max: 260, unit: '°F' },
+        { id: 'diag_oil', channel: 'oil_pressure', type: 'bar', size: 'wide', label: 'OIL PRESSURE TRANSDUCER', min: 0, max: 150, unit: 'PSI' },
+        { id: 'diag_fuel', channel: 'fuel_pressure', type: 'bar', size: 'wide', label: 'FUEL PRESSURE TRANSDUCER', min: 0, max: 150, unit: 'PSI' },
+        { id: 'diag_batt', channel: 'battery_volt', type: 'bar', size: 'wide', label: 'SYSTEM BATTERY VOLTAGE', min: 8, max: 18, unit: 'V' },
+        { id: 'diag_afr', channel: 'afr_avg', type: 'bar', size: 'wide', label: 'WIDEBAND O2 HEATER & SENSOR', min: 8, max: 22, unit: 'AFR' }
+    ]
+};
+
+// Fallback catalog of reverse-engineered channels
+const FALLBACK_CHANNELS = [
+    { index: 1, name: 'rpm', label: 'RPM', unit: 'rpm', category: 'ENGINE', min_val: 0, max_val: 10000 },
+    { index: 28, name: 'map_kpa', label: 'MAP', unit: 'kPa', category: 'ENGINE', min_val: 0, max_val: 500 },
+    { index: 29, name: 'tps', label: 'Throttle Position', unit: '%', category: 'ENGINE', min_val: 0, max_val: 100 },
+    { index: 32, name: 'baro_kpa', label: 'Barometric Pressure', unit: 'kPa', category: 'ENGINE', min_val: 50, max_val: 120 },
+    { index: 34, name: 'oil_pressure', label: 'Oil Pressure', unit: 'psi', category: 'ENGINE', min_val: 0, max_val: 150 },
+    { index: 26, name: 'iac_position', label: 'IAC Position', unit: '%', category: 'ENGINE', min_val: 0, max_val: 100 },
+    { index: 2, name: 'fuel_pw', label: 'Fuel Pulse Width', unit: 'ms', category: 'FUELING', min_val: 0, max_val: 30 },
+    { index: 3, name: 'injector_duty', label: 'Injector Duty Cycle', unit: '%', category: 'FUELING', min_val: 0, max_val: 100 },
+    { index: 4, name: 'closed_loop_comp', label: 'Closed Loop Comp', unit: '%', category: 'FUELING', min_val: -50, max_val: 50 },
+    { index: 5, name: 'target_afr', label: 'Target AFR', unit: 'AFR', category: 'FUELING', min_val: 8, max_val: 22 },
+    { index: 6, name: 'afr_left', label: 'AFR Bank 1', unit: 'AFR', category: 'FUELING', min_val: 8, max_val: 22 },
+    { index: 7, name: 'afr_right', label: 'AFR Bank 2', unit: 'AFR', category: 'FUELING', min_val: 8, max_val: 22 },
+    { index: 8, name: 'afr_avg', label: 'AFR Average', unit: 'AFR', category: 'FUELING', min_val: 8, max_val: 22 },
+    { index: 13, name: 'current_learn', label: 'Fuel Learn', unit: '%', category: 'FUELING', min_val: -50, max_val: 50 },
+    { index: 17, name: 'fuel_flow', label: 'Fuel Flow', unit: 'lb/hr', category: 'FUELING', min_val: 0, max_val: 2000 },
+    { index: 35, name: 'fuel_pressure', label: 'Fuel Pressure', unit: 'psi', category: 'FUELING', min_val: 0, max_val: 150 },
+    { index: 21, name: 'estimated_ve', label: 'Estimated VE', unit: '%', category: 'FUELING', min_val: 0, max_val: 200 },
+    { index: 126, name: 'system_boost_psig', label: 'System Boost', unit: 'psig', category: 'BOOST', min_val: 0, max_val: 60 },
+    { index: 132, name: 'boost_psig', label: 'Boost Pressure', unit: 'psig', category: 'BOOST', min_val: 0, max_val: 60 },
+    { index: 135, name: 'target_boost', label: 'Target Boost', unit: 'psig', category: 'BOOST', min_val: 0, max_val: 60 },
+    { index: 142, name: 'boost_solenoid_duty', label: 'Boost Solenoid Duty', unit: '%', category: 'BOOST', min_val: 0, max_val: 100 },
+    { index: 475, name: 'staging_input_1', label: 'Staging / Transbrake Input #1', unit: '', category: 'BOOST', min_val: 0, max_val: 1 },
+    { index: 22, name: 'timing', label: 'Ignition Timing', unit: '°BTDC', category: 'SPARK', min_val: -10, max_val: 60 },
+    { index: 24, name: 'knock_retard', label: 'Knock Retard', unit: '°', category: 'SPARK', min_val: 0, max_val: 20 },
+    { index: 30, name: 'coolant_temp', label: 'Coolant Temp', unit: '°F', category: 'TEMPERATURE', min_val: -40, max_val: 300 },
+    { index: 31, name: 'mat', label: 'Manifold Air Temp', unit: '°F', category: 'TEMPERATURE', min_val: -40, max_val: 300 },
+    { index: 33, name: 'battery_volt', label: 'Battery Voltage', unit: 'V', category: 'SYSTEM', min_val: 0, max_val: 20 },
+    { index: 219, name: 'trans_gear', label: 'Current Gear', unit: '', category: 'TRANSMISSION', min_val: 0, max_val: 6 },
+    { index: 220, name: 'vehicle_speed', label: 'Vehicle Speed', unit: 'mph', category: 'TRANSMISSION', min_val: 0, max_val: 250 },
+    { index: 221, name: 'line_pressure', label: 'Line Pressure PWM', unit: '%', category: 'TRANSMISSION', min_val: 0, max_val: 100 },
+    { index: 222, name: 'input_speed', label: 'Input Shaft Speed', unit: 'rpm', category: 'TRANSMISSION', min_val: 0, max_val: 10000 },
+    { index: 224, name: 'tcc_status', label: 'TCC Duty Cycle', unit: '%', category: 'TRANSMISSION', min_val: 0, max_val: 100 },
+    { index: 225, name: 'trans_temp', label: 'Trans Temp', unit: '°F', category: 'TRANSMISSION', min_val: -40, max_val: 350 },
+    { index: 498, name: 'line_pressure_psi', label: 'Actual Line Pressure', unit: 'psi', category: 'TRANSMISSION', min_val: 0, max_val: 300 }
+];
+
+function initLiveDashboard() {
+    // 1. View Mode Switcher
+    const btnTuning = document.getElementById('tab-btn-tuning');
+    const btnLiveDash = document.getElementById('tab-btn-live-dash');
+    if (btnTuning && btnLiveDash) {
+        btnTuning.addEventListener('click', () => switchViewMode('tuning'));
+        btnLiveDash.addEventListener('click', () => switchViewMode('live'));
+    }
+
+    // 2. Preset Selector Pills
+    const presetPills = document.querySelectorAll('#dash-preset-selector .preset-pill');
+    presetPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            const preset = pill.dataset.preset;
+            if (preset) loadDashPreset(preset);
+        });
+    });
+
+    // 3. Toolbar Action Buttons
+    const btnAdd = document.getElementById('btn-add-gauge');
+    if (btnAdd) btnAdd.addEventListener('click', () => openGaugeModal(-1));
+
+    const btnEdit = document.getElementById('btn-toggle-edit-mode');
+    if (btnEdit) {
+        btnEdit.addEventListener('click', () => {
+            state.dashEditMode = !state.dashEditMode;
+            const container = document.getElementById('live-dashboard-view');
+            const lbl = document.getElementById('lbl-edit-mode');
+            if (container) container.classList.toggle('edit-mode-active', state.dashEditMode);
+            if (lbl) lbl.textContent = state.dashEditMode ? 'Done Editing' : 'Edit Layout';
+            btnEdit.classList.toggle('active', state.dashEditMode);
+        });
+    }
+
+    const btnSave = document.getElementById('btn-save-dash-layout');
+    if (btnSave) btnSave.addEventListener('click', saveCustomPreset);
+
+    const btnReset = document.getElementById('btn-reset-dash-layout');
+    if (btnReset) btnReset.addEventListener('click', resetDashPreset);
+
+    const btnFullscreen = document.getElementById('btn-dash-fullscreen');
+    if (btnFullscreen) {
+        btnFullscreen.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        });
+    }
+
+    // 4. Gauge Modal Controls
+    const modalClose = document.getElementById('btn-close-gauge-modal');
+    const modalBackdrop = document.getElementById('gauge-modal-backdrop');
+    const modalCancel = document.getElementById('btn-cancel-gauge-cfg');
+    const gaugeForm = document.getElementById('gauge-config-form');
+
+    if (modalClose) modalClose.addEventListener('click', closeGaugeModal);
+    if (modalBackdrop) modalBackdrop.addEventListener('click', closeGaugeModal);
+    if (modalCancel) modalCancel.addEventListener('click', closeGaugeModal);
+    if (gaugeForm) gaugeForm.addEventListener('submit', saveGaugeConfig);
+
+    // 5. Fetch Full Channel Catalog from API
+    fetchChannelCatalog();
+
+    // 6. Load Initial Preset
+    loadDashPreset(state.dashPreset || 'drag');
+}
+
+function switchViewMode(mode) {
+    state.activeView = mode;
+    const btnTuning = document.getElementById('tab-btn-tuning');
+    const btnLiveDash = document.getElementById('tab-btn-live-dash');
+    const tuningWorkspace = document.getElementById('tuning-workspace');
+    const liveDashView = document.getElementById('live-dashboard-view');
+
+    if (mode === 'live') {
+        if (btnTuning) btnTuning.classList.remove('active');
+        if (btnLiveDash) btnLiveDash.classList.add('active');
+        if (tuningWorkspace) tuningWorkspace.classList.add('hidden');
+        if (liveDashView) liveDashView.classList.remove('hidden');
+        // Render gauges to measure canvas sizes correctly
+        setTimeout(renderGaugeGrid, 50);
+    } else {
+        if (btnLiveDash) btnLiveDash.classList.remove('active');
+        if (btnTuning) btnTuning.classList.add('active');
+        if (liveDashView) liveDashView.classList.add('hidden');
+        if (tuningWorkspace) tuningWorkspace.classList.remove('hidden');
+    }
+}
+
+async function fetchChannelCatalog() {
+    try {
+        const res = await fetch('/api/channels/catalog');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.channels && data.channels.length > 0) {
+                state.channelCatalog = data.channels;
+                populateChannelSelect();
+                return;
+            }
+        }
+    } catch (e) {
+        // Fallback to static catalog if API call fails
+    }
+    state.channelCatalog = FALLBACK_CHANNELS;
+    populateChannelSelect();
+}
+
+function populateChannelSelect() {
+    const select = document.getElementById('cfg-gauge-channel');
+    if (!select) return;
+
+    select.innerHTML = '';
+    const cats = {};
+    (state.channelCatalog || FALLBACK_CHANNELS).forEach(ch => {
+        const cat = ch.category || 'GENERAL';
+        cats[cat] = cats[cat] || [];
+        cats[cat].push(ch);
+    });
+
+    Object.keys(cats).sort().forEach(cat => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = `─── ${cat} ───`;
+        cats[cat].forEach(ch => {
+            const opt = document.createElement('option');
+            opt.value = ch.name;
+            opt.textContent = `${ch.label} (${ch.name}) [${ch.unit || ''}]`;
+            opt.dataset.unit = ch.unit || '';
+            opt.dataset.min = ch.min_val ?? '';
+            opt.dataset.max = ch.max_val ?? '';
+            optgroup.appendChild(opt);
+        });
+        select.appendChild(optgroup);
+    });
+
+    select.addEventListener('change', () => {
+        const opt = select.selectedOptions[0];
+        if (!opt) return;
+        const unitInp = document.getElementById('cfg-gauge-unit');
+        const minInp = document.getElementById('cfg-gauge-min');
+        const maxInp = document.getElementById('cfg-gauge-max');
+        const labelInp = document.getElementById('cfg-gauge-label');
+        if (unitInp && opt.dataset.unit) unitInp.value = opt.dataset.unit;
+        if (minInp && opt.dataset.min) minInp.value = opt.dataset.min;
+        if (maxInp && opt.dataset.max) maxInp.value = opt.dataset.max;
+        if (labelInp && !labelInp.value) labelInp.value = opt.textContent.split(' (')[0];
+    });
+}
+
+function loadDashPreset(presetName) {
+    state.dashPreset = presetName;
+    localStorage.setItem('holley_dash_active_preset', presetName);
+
+    const pills = document.querySelectorAll('#dash-preset-selector .preset-pill');
+    pills.forEach(p => p.classList.toggle('active', p.dataset.preset === presetName));
+
+    if (presetName === 'custom') {
+        const saved = localStorage.getItem('holley_dash_custom_preset');
+        if (saved) {
+            try {
+                state.dashLayout = JSON.parse(saved);
+            } catch (e) {
+                state.dashLayout = JSON.parse(JSON.stringify(DASHBOARD_PRESETS.drag));
+            }
+        } else {
+            state.dashLayout = JSON.parse(JSON.stringify(DASHBOARD_PRESETS.drag));
+        }
+    } else {
+        const preset = DASHBOARD_PRESETS[presetName] || DASHBOARD_PRESETS.drag;
+        state.dashLayout = JSON.parse(JSON.stringify(preset));
+    }
+
+    renderGaugeGrid();
+}
+
+function saveCustomPreset() {
+    localStorage.setItem('holley_dash_custom_preset', JSON.stringify(state.dashLayout));
+    state.dashPreset = 'custom';
+    localStorage.setItem('holley_dash_active_preset', 'custom');
+
+    const pills = document.querySelectorAll('#dash-preset-selector .preset-pill');
+    pills.forEach(p => p.classList.toggle('active', p.dataset.preset === 'custom'));
+
+    showToast('💾 Custom Dashboard Layout Saved!');
+}
+
+function resetDashPreset() {
+    if (confirm(`Reset dashboard layout to default "${state.dashPreset}" preset?`)) {
+        if (state.dashPreset === 'custom') {
+            state.dashLayout = JSON.parse(JSON.stringify(DASHBOARD_PRESETS.drag));
+            localStorage.setItem('holley_dash_custom_preset', JSON.stringify(state.dashLayout));
+        } else {
+            state.dashLayout = JSON.parse(JSON.stringify(DASHBOARD_PRESETS[state.dashPreset] || DASHBOARD_PRESETS.drag));
+        }
+        renderGaugeGrid();
+        showToast('🔄 Layout Reset to Default');
+    }
+}
+
+function renderGaugeGrid() {
+    const grid = document.getElementById('gauge-grid');
+    if (!grid) return;
+
+    grid.innerHTML = '';
+    const badge = document.getElementById('active-layout-badge');
+    if (badge) badge.textContent = `${state.dashLayout.length} Gauges Loaded`;
+
+    state.dashLayout.forEach((gauge, idx) => {
+        const card = document.createElement('div');
+        const sizeClass = gauge.size === 'large' ? 'gauge-large' : gauge.size === 'wide' ? 'gauge-wide' : 'gauge-normal';
+        card.className = `dash-gauge-card ${sizeClass}`;
+        card.id = `card-gauge-${idx}`;
+        card.dataset.channel = gauge.channel;
+        card.dataset.index = idx;
+
+        const valObj = state.liveValues[gauge.channel] || { value: gauge.min || 0 };
+        const currentVal = valObj.value ?? 0;
+
+        let bodyHtml = '';
+        if (gauge.type === 'dial') {
+            bodyHtml = `
+                <div class="gauge-card-body">
+                    <canvas class="gauge-dial-canvas" id="canvas-dial-${idx}"></canvas>
+                </div>
+            `;
+        } else if (gauge.type === 'bar') {
+            const min = gauge.min ?? 0;
+            const max = gauge.max ?? 100;
+            const pct = Math.max(0, Math.min(100, ((currentVal - min) / (max - min)) * 100));
+            const targetLine = gauge.target !== undefined ? `<div class="gauge-bar-target-line" style="left:${Math.max(0, Math.min(100, ((gauge.target - min) / (max - min)) * 100))}%;" title="Target: ${gauge.target}"></div>` : '';
+            bodyHtml = `
+                <div class="gauge-card-body">
+                    <div class="gauge-bar-wrapper">
+                        <div class="gauge-bar-numeric">
+                            <span class="gauge-bar-val" id="bar-val-${idx}">${Number(currentVal).toFixed(1)}</span>
+                            <span class="gauge-bar-unit">${escapeHtml(gauge.unit || '')}</span>
+                        </div>
+                        <div class="gauge-bar-track">
+                            <div class="gauge-bar-fill" id="bar-fill-${idx}" style="width: ${pct}%;"></div>
+                            ${targetLine}
+                        </div>
+                        <div class="gauge-bar-scale-labels">
+                            <span>${min}</span>
+                            ${gauge.target !== undefined ? `<span>🎯 ${gauge.target}</span>` : ''}
+                            <span>${max}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (gauge.type === 'stat') {
+            bodyHtml = `
+                <div class="gauge-card-body">
+                    <div class="gauge-stat-box">
+                        <div class="stat-big-val" id="stat-val-${idx}">${Number(currentVal).toFixed(gauge.unit === 'STATUS' || gauge.unit === 'GEAR' ? 0 : 1)}</div>
+                        <div class="stat-unit-line">${escapeHtml(gauge.unit || '')}</div>
+                        <div class="stat-subline">
+                            <span id="stat-min-${idx}">MIN: ${Number(currentVal).toFixed(1)}</span>
+                            <span>•</span>
+                            <span id="stat-max-${idx}">MAX: ${Number(currentVal).toFixed(1)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else if (gauge.type === 'chart') {
+            bodyHtml = `
+                <div class="gauge-card-body">
+                    <canvas class="gauge-chart-canvas" id="canvas-chart-${idx}"></canvas>
+                    <div class="gauge-chart-stat-overlay" id="chart-val-${idx}">${Number(currentVal).toFixed(1)} ${escapeHtml(gauge.unit || '')}</div>
+                </div>
+            `;
+        }
+
+        card.innerHTML = `
+            <div class="gauge-card-header">
+                <div class="gauge-title-group">
+                    <span class="gauge-title" title="${escapeHtml(gauge.label)}">${escapeHtml(gauge.label)}</span>
+                    <span class="gauge-fault-badge healthy" id="fault-badge-${idx}">HEALTHY</span>
+                </div>
+                <div class="gauge-actions">
+                    <button type="button" class="gauge-action-btn" onclick="moveGauge(${idx}, -1)" title="Move Left">⬅️</button>
+                    <button type="button" class="gauge-action-btn" onclick="moveGauge(${idx}, 1)" title="Move Right">➡️</button>
+                    <button type="button" class="gauge-action-btn" onclick="openGaugeModal(${idx})" title="Edit Gauge">⚙️</button>
+                    <button type="button" class="gauge-action-btn btn-del" onclick="deleteGauge(${idx})" title="Remove Gauge">🗑️</button>
+                </div>
+            </div>
+            ${bodyHtml}
+        `;
+
+        grid.appendChild(card);
+
+        // Pre-render canvases
+        if (gauge.type === 'dial') {
+            setTimeout(() => {
+                const cv = document.getElementById(`canvas-dial-${idx}`);
+                if (cv) drawDialGauge(cv, currentVal, gauge);
+            }, 20);
+        } else if (gauge.type === 'chart') {
+            setTimeout(() => {
+                const cv = document.getElementById(`canvas-chart-${idx}`);
+                state.historyBuffers[gauge.id] = state.historyBuffers[gauge.id] || [currentVal];
+                if (cv) drawSparklineChart(cv, state.historyBuffers[gauge.id], gauge);
+            }, 20);
+        }
+    });
+}
+
+function handleLiveCANUpdate(msg) {
+    // 1. Telemetry Frame Rate (fps) calculation
+    state.canPktCount++;
+    const now = Date.now();
+    if (now - state.canLastFpsTime >= 1000) {
+        state.canFps = state.canPktCount;
+        state.canPktCount = 0;
+        state.canLastFpsTime = now;
+        const rateEl = document.getElementById('can-rate-text');
+        if (rateEl) rateEl.textContent = `CAN ${state.canFps} fps`;
+    }
+
+    if (!msg.channels) return;
+
+    // 2. Cache latest channel values & update buffer
+    Object.keys(msg.channels).forEach(name => {
+        const chData = msg.channels[name];
+        state.liveValues[name] = chData;
+    });
+
+    // 3. Update rendered gauges
+    state.dashLayout.forEach((gauge, idx) => {
+        const chData = state.liveValues[gauge.channel];
+        if (!chData) return;
+
+        const val = Number(chData.value);
+        const card = document.getElementById(`card-gauge-${idx}`);
+        if (!card) return;
+
+        // Peak tracking
+        state.gaugePeaks[gauge.id] = Math.max(state.gaugePeaks[gauge.id] ?? val, val);
+
+        // Hardware circuit fault badging
+        const faultBadge = document.getElementById(`fault-badge-${idx}`);
+        if (faultBadge) {
+            const fault = chData.circuit_fault;
+            if (fault && !fault.healthy) {
+                faultBadge.className = 'gauge-fault-badge fault';
+                const codeStr = (fault.fault_codes && fault.fault_codes.length) ? fault.fault_codes[0] : 'FAULT';
+                faultBadge.textContent = `⚠️ ${codeStr}`;
+                faultBadge.title = fault.fault_codes ? fault.fault_codes.join(', ') : 'Sensor Circuit Fault';
+            } else {
+                faultBadge.className = 'gauge-fault-badge healthy';
+            }
+        }
+
+        // Danger / Shift Light pulse
+        if (gauge.danger !== undefined && val >= gauge.danger) {
+            card.classList.add('danger-pulse');
+        } else {
+            card.classList.remove('danger-pulse');
+        }
+
+        // Render type update
+        if (gauge.type === 'dial') {
+            const cv = document.getElementById(`canvas-dial-${idx}`);
+            if (cv) drawDialGauge(cv, val, gauge);
+        } else if (gauge.type === 'bar') {
+            const min = gauge.min ?? 0;
+            const max = gauge.max ?? 100;
+            const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+            const fill = document.getElementById(`bar-fill-${idx}`);
+            const valEl = document.getElementById(`bar-val-${idx}`);
+            if (fill) {
+                fill.style.width = `${pct}%`;
+                if (gauge.danger !== undefined && val >= gauge.danger) {
+                    fill.style.background = '#ff1744';
+                } else if (gauge.warn !== undefined && val >= gauge.warn) {
+                    fill.style.background = '#ff9100';
+                } else {
+                    fill.style.background = 'linear-gradient(90deg, #00e5ff 0%, #00e676 100%)';
+                }
+            }
+            if (valEl) valEl.textContent = val.toFixed(1);
+        } else if (gauge.type === 'stat') {
+            const valEl = document.getElementById(`stat-val-${idx}`);
+            const maxEl = document.getElementById(`stat-max-${idx}`);
+            if (valEl) valEl.textContent = val.toFixed(gauge.unit === 'STATUS' || gauge.unit === 'GEAR' ? 0 : 1);
+            if (maxEl) maxEl.textContent = `MAX: ${state.gaugePeaks[gauge.id].toFixed(1)}`;
+        } else if (gauge.type === 'chart') {
+            state.historyBuffers[gauge.id] = state.historyBuffers[gauge.id] || [];
+            const buf = state.historyBuffers[gauge.id];
+            buf.push(val);
+            if (buf.length > 30) buf.shift();
+
+            const cv = document.getElementById(`canvas-chart-${idx}`);
+            const overlay = document.getElementById(`chart-val-${idx}`);
+            if (cv) drawSparklineChart(cv, buf, gauge);
+            if (overlay) overlay.textContent = `${val.toFixed(1)} ${gauge.unit || ''}`;
+        }
+    });
+}
+
+function drawDialGauge(canvas, value, gauge) {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const w = rect.width;
+    const h = rect.height;
+    const cx = w / 2;
+    const cy = h * 0.52;
+    const r = Math.min(w, h) * 0.42;
+
+    const min = gauge.min ?? 0;
+    const max = gauge.max ?? 100;
+    const clampedVal = Math.max(min, Math.min(max, value));
+
+    const startAngle = 135 * Math.PI / 180;
+    const endAngle = 405 * Math.PI / 180;
+    const sweep = endAngle - startAngle;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // 1. Background Track Arc
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startAngle, endAngle);
+    ctx.lineWidth = Math.max(6, r * 0.08);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // 2. Warning Arc
+    if (gauge.warn !== undefined && gauge.danger !== undefined && gauge.warn < max) {
+        const warnAngle = startAngle + ((Math.max(min, gauge.warn) - min) / (max - min)) * sweep;
+        const dangerAngle = startAngle + ((Math.min(max, gauge.danger) - min) / (max - min)) * sweep;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, warnAngle, dangerAngle);
+        ctx.lineWidth = Math.max(6, r * 0.08);
+        ctx.strokeStyle = 'rgba(255, 145, 0, 0.5)';
+        ctx.stroke();
+    }
+
+    // 3. Danger / Redline Arc
+    if (gauge.danger !== undefined && gauge.danger < max) {
+        const dangerAngle = startAngle + ((Math.max(min, gauge.danger) - min) / (max - min)) * sweep;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, dangerAngle, endAngle);
+        ctx.lineWidth = Math.max(6, r * 0.08);
+        ctx.strokeStyle = 'rgba(255, 23, 68, 0.85)';
+        ctx.stroke();
+    }
+
+    // 4. Value Progress Arc
+    const valAngle = startAngle + ((clampedVal - min) / (max - min)) * sweep;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startAngle, valAngle);
+    ctx.lineWidth = Math.max(6, r * 0.08);
+    ctx.strokeStyle = (gauge.danger !== undefined && value >= gauge.danger) ? '#ff1744' : '#00e5ff';
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = (gauge.danger !== undefined && value >= gauge.danger) ? 'rgba(255, 23, 68, 0.6)' : 'rgba(0, 229, 255, 0.6)';
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // 5. Major Tick Marks & Numbers
+    const numTicks = 6;
+    for (let i = 0; i <= numTicks; i++) {
+        const tickVal = min + (i / numTicks) * (max - min);
+        const tickAngle = startAngle + (i / numTicks) * sweep;
+        const isDanger = gauge.danger !== undefined && tickVal >= gauge.danger;
+
+        const x1 = cx + (r - 12) * Math.cos(tickAngle);
+        const y1 = cy + (r - 12) * Math.sin(tickAngle);
+        const x2 = cx + (r - 2) * Math.cos(tickAngle);
+        const y2 = cy + (r - 2) * Math.sin(tickAngle);
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = isDanger ? '#ff1744' : 'rgba(255, 255, 255, 0.35)';
+        ctx.stroke();
+
+        // Tick Label
+        const xt = cx + (r - 22) * Math.cos(tickAngle);
+        const yt = cy + (r - 22) * Math.sin(tickAngle);
+        ctx.font = `600 ${Math.max(9, r * 0.12)}px 'JetBrains Mono', monospace`;
+        ctx.fillStyle = isDanger ? '#ff5252' : '#94a3b8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(Math.round(tickVal), xt, yt);
+    }
+
+    // 6. Swept Needle
+    const needleLen = r * 0.85;
+    const nx = cx + needleLen * Math.cos(valAngle);
+    const ny = cy + needleLen * Math.sin(valAngle);
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(nx, ny);
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = (gauge.danger !== undefined && value >= gauge.danger) ? '#ff1744' : '#00e5ff';
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = (gauge.danger !== undefined && value >= gauge.danger) ? '#ff1744' : '#00e5ff';
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Needle Boss Cap
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(6, r * 0.1), 0, Math.PI * 2);
+    ctx.fillStyle = '#0f172a';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#00e5ff';
+    ctx.stroke();
+
+    // 7. Center Digital Value & Unit
+    ctx.font = `900 ${Math.max(16, r * 0.28)}px 'Orbitron', monospace`;
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Number(value).toFixed(max > 200 ? 0 : 1), cx, cy + r * 0.45);
+
+    ctx.font = `700 ${Math.max(9, r * 0.12)}px 'JetBrains Mono', monospace`;
+    ctx.fillStyle = '#00e5ff';
+    ctx.fillText(gauge.unit || '', cx, cy + r * 0.65);
+}
+
+function drawSparklineChart(canvas, historyArr, gauge) {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const w = rect.width;
+    const h = rect.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    if (!historyArr || historyArr.length < 2) return;
+
+    const min = gauge.min ?? Math.min(...historyArr);
+    const max = Math.max(gauge.max ?? Math.max(...historyArr), min + 0.001);
+
+    // Area Gradient Fill
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, 'rgba(0, 229, 255, 0.3)');
+    grad.addColorStop(1, 'rgba(0, 229, 255, 0.0)');
+
+    ctx.beginPath();
+    historyArr.forEach((val, i) => {
+        const x = (i / (historyArr.length - 1)) * w;
+        const norm = (val - min) / (max - min);
+        const y = h - Math.max(0, Math.min(1, norm)) * (h - 10) - 5;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.lineTo(w, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+}
+
+function openGaugeModal(gaugeIdx) {
+    const modal = document.getElementById('gauge-modal');
+    const idxInput = document.getElementById('cfg-gauge-edit-idx');
+    const titleEl = document.getElementById('gauge-modal-title');
+    const channelSelect = document.getElementById('cfg-gauge-channel');
+    const typeSelect = document.getElementById('cfg-gauge-type');
+    const sizeSelect = document.getElementById('cfg-gauge-size');
+    const labelInput = document.getElementById('cfg-gauge-label');
+    const minInput = document.getElementById('cfg-gauge-min');
+    const maxInput = document.getElementById('cfg-gauge-max');
+    const warnInput = document.getElementById('cfg-gauge-warn');
+    const dangerInput = document.getElementById('cfg-gauge-danger');
+    const targetInput = document.getElementById('cfg-gauge-target');
+    const unitInput = document.getElementById('cfg-gauge-unit');
+
+    if (!modal) return;
+    idxInput.value = gaugeIdx;
+
+    if (gaugeIdx >= 0 && state.dashLayout[gaugeIdx]) {
+        const g = state.dashLayout[gaugeIdx];
+        if (titleEl) titleEl.textContent = `Edit Gauge: ${g.label}`;
+        if (channelSelect) channelSelect.value = g.channel;
+        if (typeSelect) typeSelect.value = g.type || 'dial';
+        if (sizeSelect) sizeSelect.value = g.size || 'normal';
+        if (labelInput) labelInput.value = g.label || '';
+        if (minInput) minInput.value = g.min ?? '';
+        if (maxInput) maxInput.value = g.max ?? '';
+        if (warnInput) warnInput.value = g.warn ?? '';
+        if (dangerInput) dangerInput.value = g.danger ?? '';
+        if (targetInput) targetInput.value = g.target ?? '';
+        if (unitInput) unitInput.value = g.unit ?? '';
+    } else {
+        if (titleEl) titleEl.textContent = 'Add New Live Gauge';
+        if (labelInput) labelInput.value = '';
+        if (minInput) minInput.value = '0';
+        if (maxInput) maxInput.value = '100';
+        if (warnInput) warnInput.value = '';
+        if (dangerInput) dangerInput.value = '';
+        if (targetInput) targetInput.value = '';
+        if (unitInput) unitInput.value = '';
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeGaugeModal() {
+    const modal = document.getElementById('gauge-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function saveGaugeConfig(e) {
+    e.preventDefault();
+    const idx = parseInt(document.getElementById('cfg-gauge-edit-idx').value, 10);
+    const channel = document.getElementById('cfg-gauge-channel').value;
+    const type = document.getElementById('cfg-gauge-type').value;
+    const size = document.getElementById('cfg-gauge-size').value;
+    const label = document.getElementById('cfg-gauge-label').value.trim() || channel.toUpperCase();
+    const min = document.getElementById('cfg-gauge-min').value !== '' ? parseFloat(document.getElementById('cfg-gauge-min').value) : 0;
+    const max = document.getElementById('cfg-gauge-max').value !== '' ? parseFloat(document.getElementById('cfg-gauge-max').value) : 100;
+    const warn = document.getElementById('cfg-gauge-warn').value !== '' ? parseFloat(document.getElementById('cfg-gauge-warn').value) : undefined;
+    const danger = document.getElementById('cfg-gauge-danger').value !== '' ? parseFloat(document.getElementById('cfg-gauge-danger').value) : undefined;
+    const target = document.getElementById('cfg-gauge-target').value !== '' ? parseFloat(document.getElementById('cfg-gauge-target').value) : undefined;
+    const unit = document.getElementById('cfg-gauge-unit').value.trim();
+
+    const gaugeObj = {
+        id: `gauge_${channel}_${Date.now()}`,
+        channel,
+        type,
+        size,
+        label,
+        min,
+        max,
+        unit,
+    };
+    if (warn !== undefined) gaugeObj.warn = warn;
+    if (danger !== undefined) gaugeObj.danger = danger;
+    if (target !== undefined) gaugeObj.target = target;
+
+    if (idx >= 0 && idx < state.dashLayout.length) {
+        state.dashLayout[idx] = gaugeObj;
+        showToast(`Updated Gauge: ${label}`);
+    } else {
+        state.dashLayout.push(gaugeObj);
+        showToast(`Added Gauge: ${label}`);
+    }
+
+    closeGaugeModal();
+    renderGaugeGrid();
+}
+
+function moveGauge(idx, direction) {
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= state.dashLayout.length) return;
+    const temp = state.dashLayout[idx];
+    state.dashLayout[idx] = state.dashLayout[targetIdx];
+    state.dashLayout[targetIdx] = temp;
+    renderGaugeGrid();
+}
+
+function deleteGauge(idx) {
+    if (confirm(`Remove gauge "${state.dashLayout[idx]?.label}" from dashboard?`)) {
+        state.dashLayout.splice(idx, 1);
+        renderGaugeGrid();
+        showToast('Gauge Removed');
+    }
+}
+
