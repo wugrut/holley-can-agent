@@ -247,3 +247,39 @@ class TestChannelMap:
         ch = CHANNEL_BY_NAME["rpm"]
         assert ch.index == 1
         assert ch.category == ChannelCategory.ENGINE
+
+    def test_reverse_engineered_command_and_diagnostic_helpers(self):
+        from holley_can.protocol import (
+            build_command_can_id,
+            decode_sensor_status_flags,
+            is_rpc_start_frame,
+            RPC_MAGIC_BYTES,
+        )
+
+        # 1. Test build_command_can_id
+        cmd_id = build_command_can_id(command_index=0, target_serial=0x556)
+        # Should have Bit 28=0, Target=7 (0x0E000000), source=5 (0b101 << 11 = 0x2800), serial=0x556
+        assert (cmd_id >> 28) & 1 == 0
+        assert (cmd_id & 0x1E000000) == 0x0E000000
+        assert (cmd_id & 0x7FF) == 0x556
+        assert cmd_id == 0x0E002800 | 0x556
+
+        # 2. Test is_rpc_start_frame
+        payload_valid = struct.pack(">I", 2512) + RPC_MAGIC_BYTES
+        is_rpc, total_len = is_rpc_start_frame(8, payload_valid)
+        assert is_rpc is True
+        assert total_len == 2512
+
+        is_rpc_false, _ = is_rpc_start_frame(8, b"\x00" * 8)
+        assert is_rpc_false is False
+
+        # 3. Test decode_sensor_status_flags
+        flags_healthy = decode_sensor_status_flags(0.0)
+        assert flags_healthy["healthy"] is True
+        assert flags_healthy["below_min"] is False
+
+        flags_fault = decode_sensor_status_flags(0x05) # below_min (1) + out_of_range (4)
+        assert flags_fault["healthy"] is False
+        assert flags_fault["below_min"] is True
+        assert flags_fault["out_of_range"] is True
+        assert flags_fault["above_max"] is False

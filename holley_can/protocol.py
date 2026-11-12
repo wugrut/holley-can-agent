@@ -20,7 +20,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 
 # ─── CAN ID Constants ───────────────────────────────────────────────────────
@@ -679,4 +679,60 @@ def is_ecu_announcement(can_id: int) -> bool:
     source_id = (clean_id >> 14) & 0x7FF
     source_status = (clean_id >> 11) & 0x7
     return source_id in (0, 1) and source_status == 2
+
+
+# ─── Option 2: Reverse-Engineered Diagnostic & RPC Command Protocol ────────
+
+# RPC Multi-frame Block Transfer Magic (LE: 0xF2493722)
+RPC_MAGIC_BYTES: bytes = b"\x22\x37\x49\xf2"
+RPC_MAGIC_U32: int = 0xF2493722
+
+# Device Type Identifiers in Bits 13:11
+DEVICE_TYPE_BROADCAST: int = 0b000
+DEVICE_TYPE_ECU: int = 0b010        # 2 = ECU
+DEVICE_TYPE_TOOL: int = 0b101       # 5 = PC Software / Handheld Tool
+
+
+def build_command_can_id(command_index: int, target_serial: int, source_type: int = DEVICE_TYPE_TOOL) -> int:
+    """
+    Constructs a 29-bit extended CAN ID for PC tool commands directed to an ECU.
+    Bit 28 = 0 (Command), Target = 0b111 (0x0E000000 base).
+    """
+    can_id = 0x0E000000
+    can_id |= (command_index & 0x7FF) << 14
+    can_id |= (source_type & 0x7) << 11
+    can_id |= (target_serial & 0x7FF)
+    return can_id
+
+
+def is_rpc_start_frame(dlc: int, payload: bytes) -> tuple[bool, int]:
+    """
+    Checks if a CAN frame begins a multi-frame 0xF2493722 RPC response.
+    Returns (True, total_byte_length) if matched, otherwise (False, 0).
+    """
+    if dlc == 8 and len(payload) >= 8 and payload[4:8] == RPC_MAGIC_BYTES:
+        total_len = struct.unpack_from(">I", payload, 0)[0]
+        return True, total_len
+    return False, 0
+
+
+def decode_sensor_status_flags(status_val: float | int) -> dict[str, Any]:
+    """
+    Decodes the 32-bit status/diagnostic word (value_b) accompanying sensor channels.
+    Bitflags:
+      Bit 0 (0x01): Sensor Value Below Minimum / Short to Ground
+      Bit 1 (0x02): Sensor Value Above Maximum / Open Circuit / Short to 5V
+      Bit 2 (0x04): Out of Range Warning
+      Bit 3 (0x08): Sensor Uncalibrated or Signal Loss
+    """
+    u32 = int(status_val) if isinstance(status_val, float) else status_val
+    return {
+        "healthy": u32 == 0,
+        "below_min": bool(u32 & 0x01),
+        "above_max": bool(u32 & 0x02),
+        "out_of_range": bool(u32 & 0x04),
+        "uncalibrated": bool(u32 & 0x08),
+        "raw_status": u32,
+    }
+
 
