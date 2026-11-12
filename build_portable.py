@@ -122,6 +122,12 @@ def build():
         shutil.copy2(single_exe, compat_exe)
         shutil.copy2(single_exe, TARGET_DIR / "Holley_EFI_Copilot.exe")
         shutil.copy2(single_exe, TARGET_DIR / "efi_copilot.exe")
+        shutil.copy2(single_exe, BASE_DIR / "Holley_EFI_Copilot.exe")
+        gdrive_dir = Path("G:/My Drive/Holley")
+        if gdrive_dir.exists():
+            shutil.copy2(single_exe, gdrive_dir / "Holley_EFI_Copilot.exe")
+            shutil.copy2(single_exe, gdrive_dir / "efi_copilot.exe")
+            print(f"   [OK] Synced single executable to Google Drive: {gdrive_dir}")
         exe_size_mb = single_exe.stat().st_size / (1024 * 1024)
         print(f"   [OK] Standalone Single Executable: {single_exe.name} ({exe_size_mb:.1f} MB)")
 
@@ -164,6 +170,11 @@ def build():
 
     zip_mb = ZIP_OUTPUT.stat().st_size / (1024 * 1024)
     print(f"   [OK] Portable ZIP created ({zip_mb:.1f} MB, {file_count} files)")
+
+    gdrive_dir = Path("G:/My Drive/Holley")
+    if gdrive_dir.exists():
+        shutil.copy2(ZIP_OUTPUT, gdrive_dir / ZIP_OUTPUT.name)
+        print(f"   [OK] Synced portable ZIP to Google Drive: {gdrive_dir}")
 
     # 5. Summary & Verification
     print("\n" + "=" * 76)
