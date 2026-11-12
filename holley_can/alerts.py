@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine, Optional
 
-from .protocol import DecodedFrame
+from .protocol import DecodedFrame, decode_sensor_status_flags
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,50 @@ class AlertEngine:
         await self._check_overboost(name, value, now)
         await self._check_low_voltage(name, value, now)
         await self._check_high_coolant(name, value, now)
+        await self._check_sensor_circuit_fault(frame, now)
+
+    async def _check_sensor_circuit_fault(self, frame: DecodedFrame, now: float) -> None:
+        """
+        Evaluates the secondary 32-bit status word (value_b) for hardware circuit faults.
+        Directly decodes Holley ECU sensor health:
+          - Bit 0 (0x01): Below Minimum (Short to Ground / Sensor Unplugged)
+          - Bit 1 (0x02): Above Maximum (Open Circuit / Short to 5V Reference)
+          - Bit 2 (0x04): Out of Range Warning
+          - Bit 3 (0x08): Uncalibrated / Signal Loss
+        """
+        if frame.value_b is None:
+            return
+
+        flags = decode_sensor_status_flags(frame.value_b)
+        alert_type = f"circuit_fault_{frame.name}"
+
+        if flags["healthy"]:
+            if alert_type in self._active:
+                self._resolve_alert(alert_type)
+            return
+
+        # Determine failure description and severity
+        faults = []
+        if flags["below_min"]:
+            faults.append("Short to GND / Disconnected")
+        if flags["above_max"]:
+            faults.append("Open Circuit / Short to 5V")
+        if flags["out_of_range"]:
+            faults.append("Out of Range")
+        if flags["uncalibrated"]:
+            faults.append("Uncalibrated / Signal Loss")
+
+        fault_desc = ", ".join(faults) if faults else f"Status 0x{flags['raw_status']:02X}"
+        label = frame.channel_def.label if frame.channel_def and frame.channel_def.label else frame.name
+
+        await self._fire_alert(
+            alert_type=alert_type,
+            severity=Severity.CRITICAL if (flags["below_min"] or flags["above_max"]) else Severity.WARNING,
+            channel=frame.name,
+            message=f"{label} Hardware Circuit Fault: {fault_desc}",
+            value=float(flags["raw_status"]),
+            threshold=0.0,
+        )
 
     async def check_dropouts(self) -> None:
         """

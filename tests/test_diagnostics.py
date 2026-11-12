@@ -132,3 +132,47 @@ class TestDiagnosticEngine:
             wot_events.extend(detector.feed_sample(s))
         wot_diags = engine.evaluate_session(wot_samples, wot_events)
         assert len(wot_diags) == 0, f"Expected 0 diagnostics on healthy WOT pull, got {len(wot_diags)}"
+
+    @pytest.mark.anyio
+    async def test_alerts_sensor_circuit_fault_detection(self):
+        from holley_can.alerts import AlertEngine
+        from holley_can.protocol import DecodedFrame, CHANNEL_BY_NAME
+
+        engine = AlertEngine()
+        ch_clt = CHANNEL_BY_NAME["coolant_temp"]
+
+        # 1. Frame with fault flag (0x02: Above Max / Open Circuit)
+        fault_frame = DecodedFrame(
+            timestamp=100.0,
+            channel_index=ch_clt.index,
+            channel_def=ch_clt,
+            value_a=260.0,
+            value_b=2.0,  # 0x02 = Open circuit / Short to 5V
+            raw_id=0x1E007800,
+            raw_data=b"\x00" * 8,
+            ecu_serial_bits=0x1A5,
+            protocol="hefi",
+        )
+        await engine.on_frame(fault_frame)
+        active = engine.get_active_alerts()
+        circuit_alerts = [a for a in active if "circuit_fault" in a["alert_type"]]
+        assert len(circuit_alerts) == 1
+        assert "Open Circuit / Short to 5V" in circuit_alerts[0]["message"]
+        assert circuit_alerts[0]["severity"] == "critical"
+
+        # 2. Healthy frame clears the fault
+        healthy_frame = DecodedFrame(
+            timestamp=101.0,
+            channel_index=ch_clt.index,
+            channel_def=ch_clt,
+            value_a=185.0,
+            value_b=0.0,  # 0x00 = Healthy
+            raw_id=0x1E007800,
+            raw_data=b"\x00" * 8,
+            ecu_serial_bits=0x1A5,
+            protocol="hefi",
+        )
+        await engine.on_frame(healthy_frame)
+        active_after = engine.get_active_alerts()
+        circuit_alerts_after = [a for a in active_after if "circuit_fault" in a["alert_type"]]
+        assert len(circuit_alerts_after) == 0

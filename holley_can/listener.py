@@ -27,6 +27,7 @@ from .protocol import (
     decode_racepak_frame,
     extract_channel_index,
     extract_ecu_serial,
+    decode_sensor_status_flags,
     is_ecu_announcement,
     is_hefi_announcement,
     is_hefi_broadcast,
@@ -130,6 +131,7 @@ class CANListener:
                 "unit": snap.unit,
                 "value": round(snap.value, 3),
                 "value_b": round(snap.value_b, 3),
+                "circuit_fault": decode_sensor_status_flags(snap.value_b) if snap.value_b else {"healthy": True},
                 "timestamp": snap.timestamp,
                 "age_ms": round((time.time() - snap.timestamp) * 1000, 1),
             }
