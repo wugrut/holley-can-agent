@@ -308,6 +308,7 @@ class VETableOptimizer:
         # Snapshot of the previously loaded log's corrections, for before/after comparison.
         self._loaded_name: Optional[str] = None
         self._prev_snapshot: Optional[Dict[str, Any]] = None
+        self.tune_history: List[Dict[str, Any]] = []
 
         self.rpm_axis = list(RPM_AXIS)
         self.map_axis = list(MAP_AXIS)
@@ -362,6 +363,83 @@ class VETableOptimizer:
         self._prev_tps = None
         self._prev_map = None
         self._history_buffer.clear()
+
+    def save_revision(self, note: str = "") -> Dict[str, Any]:
+        """Saves a restorable snapshot of the current VE matrix to tune_history."""
+        if self.total_samples_ingested == 0:
+            return {}
+        rev_id = f"rev_{len(self.tune_history) + 1}_{int(time.time())}"
+        payload = self.get_matrix_payload(include_learn=True, include_comparison=False)
+        grid_data = [
+            [
+                {
+                    "hits": cell.hits,
+                    "sum_afr": cell.sum_afr,
+                    "sum_target_afr": cell.sum_target_afr,
+                    "sum_cl_comp": cell.sum_cl_comp,
+                    "sum_learn": cell.sum_learn,
+                    "sum_base_ve": cell.sum_base_ve,
+                    "sum_fuel_psi": cell.sum_fuel_psi,
+                    "sum_diff_fuel_psi": cell.sum_diff_fuel_psi,
+                    "sum_knock": cell.sum_knock,
+                    "fuel_psi_drop_hits": cell.fuel_psi_drop_hits,
+                }
+                for cell in row
+            ]
+            for row in self.grid
+        ]
+        rev = {
+            "id": rev_id,
+            "timestamp": time.time(),
+            "source": self.last_source,
+            "note": note,
+            "cells_populated": payload.get("cells_populated", 0),
+            "total_samples": self.total_samples_ingested,
+            "grid_data": grid_data,
+        }
+        self.tune_history.append(rev)
+        if len(self.tune_history) > 20:
+            self.tune_history.pop(0)
+        return rev
+
+    def revert_to_revision(self, rev_id: str) -> Optional[Dict[str, Any]]:
+        """Restores the VE table and accumulators from a historical revision."""
+        target_rev = next((r for r in self.tune_history if r["id"] == rev_id), None)
+        if not target_rev:
+            return None
+        self.reset()
+        grid_data = target_rev.get("grid_data", [])
+        for m_idx in range(min(16, len(grid_data))):
+            for r_idx in range(min(16, len(grid_data[m_idx]))):
+                d = grid_data[m_idx][r_idx]
+                acc = self.grid[m_idx][r_idx]
+                acc.hits = d["hits"]
+                acc.sum_afr = d["sum_afr"]
+                acc.sum_target_afr = d["sum_target_afr"]
+                acc.sum_cl_comp = d["sum_cl_comp"]
+                acc.sum_learn = d["sum_learn"]
+                acc.sum_base_ve = d["sum_base_ve"]
+                acc.sum_fuel_psi = d["sum_fuel_psi"]
+                acc.sum_diff_fuel_psi = d["sum_diff_fuel_psi"]
+                acc.sum_knock = d["sum_knock"]
+                acc.fuel_psi_drop_hits = d["fuel_psi_drop_hits"]
+        self.total_samples_ingested = target_rev.get("total_samples", 0)
+        self.last_source = f"{target_rev.get('source', 'unknown')} (Reverted to {rev_id})"
+        return self.get_matrix_payload()
+
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Returns summary list of past tune revisions (newest first)."""
+        return [
+            {
+                "id": r["id"],
+                "timestamp": r["timestamp"],
+                "source": r["source"],
+                "note": r["note"],
+                "cells_populated": r["cells_populated"],
+                "total_samples": r["total_samples"],
+            }
+            for r in reversed(self.tune_history)
+        ]
 
     def ingest_row(self, row: Dict[str, float], allow_cold: bool = False) -> bool:
         """
@@ -548,6 +626,8 @@ class VETableOptimizer:
             self.last_source = f"{Path(file_path).name} (cold override)"
             for r in rows:
                 self.ingest_row(r, allow_cold=True)
+        if self.total_samples_ingested > 0:
+            self.save_revision()
         return self.get_matrix_payload()
 
     def export_holley_tsv(self, include_learn: bool = True) -> str:
@@ -772,6 +852,7 @@ class VETableOptimizer:
             "limited_cells": limited_cells,
             "cells_populated": cells_touched,
             "comparison": self._build_comparison(snapshot_cells) if include_comparison else None,
+            "tune_history": self.get_history(),
             "include_learn": include_learn,
             "cells_with_active_learn": cells_with_active_learn,
             "learn_action_notice": (
@@ -1055,9 +1136,34 @@ class PostPullDetector:
         else:
             verdict_parts.append(f"WOT AFR tracked {avg_afr:.2f} (Target {avg_target:.2f}) within ±2% steady target.")
 
+        step = max(1, len(samples) // 60)
+        t0 = samples[0].get("timestamp_s", 0.0) or samples[0].get("timestamp", 0.0)
+        trace: List[Dict[str, Any]] = []
+        for i in range(0, len(samples), step):
+            s_row = samples[i]
+            cur_t = s_row.get("timestamp_s", 0.0) or s_row.get("timestamp", 0.0)
+            s_map = s_row.get("map_kpa", 101.325)
+            s_boost = max(0.0, (s_map - baro) * 0.145038)
+            s_afr = s_row.get("afr_avg") or s_row.get("afr_left") or 12.5
+            s_tafr = s_row.get("target_afr", 12.5)
+            raw_fp = s_row.get("fuel_pressure")
+            s_man_psi = (s_map - baro) * 0.145038
+            s_fp = float(raw_fp) if (raw_fp is not None and raw_fp > 0.0) else (self.base_fuel_psi + s_man_psi)
+            s_diff_fp = s_fp - s_man_psi
+            trace.append({
+                "t": round(max(0.0, cur_t - t0), 2),
+                "rpm": round(s_row.get("rpm", 0.0)),
+                "boost": round(s_boost, 1),
+                "afr": round(s_afr, 2),
+                "target_afr": round(s_tafr, 2),
+                "diff_fp": round(s_diff_fp, 1),
+                "knock": round(s_row.get("knock_retard", 0.0), 1),
+            })
+
         card = {
             "timestamp": time.time(),
             "duration_s": round(duration_s, 1),
+            "trace": trace,
             "peak_rpm": round(peak_rpm, 0),
             "peak_map_kpa": round(peak_map, 1),
             "peak_boost_psig": round(peak_boost, 1),

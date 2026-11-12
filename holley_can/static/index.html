@@ -166,6 +166,18 @@
                     <h2>16×16 FUEL VE OPTIMIZER</h2>
                 </div>
                 <div class="panel-controls">
+                    <div class="history-dropdown-wrapper">
+                        <button type="button" id="btn-toggle-history" class="header-btn secondary-btn" title="View past tune revisions and revert table">
+                            <span>⏱️</span> <span>Revisions (<span id="history-count">0</span>)</span>
+                        </button>
+                        <div id="history-dropdown" class="history-dropdown hidden">
+                            <div class="history-dropdown-header">
+                                <strong>SESSION REVISIONS</strong>
+                                <span class="history-hint">Click Revert to restore</span>
+                            </div>
+                            <div id="history-list" class="history-list"></div>
+                        </div>
+                    </div>
                     <label class="toggle-control" title="When checked, ECU Fuel Learn % and Closed-Loop Comp % are both folded into recommended Base VE. Remember to click 'Reset Learn Table' in Holley software after pasting!">
                         <input type="checkbox" id="check-fold-learn" checked>
                         <span>Fold Fuel Learn % into Base VE</span>
@@ -182,6 +194,19 @@
                 </div>
                 <div id="scorecard-details" class="scorecard-details">
                     Ready to analyze next WOT pull or loaded Holley .dl datalog...
+                </div>
+                <div id="pull-chart-wrapper" class="pull-chart-wrapper hidden">
+                    <div class="chart-header">
+                        <span class="chart-title">📈 WOT PULL TELEMETRY TRACE</span>
+                        <div class="chart-legend">
+                            <span class="lg-rpm">● RPM</span>
+                            <span class="lg-boost">● Boost (PSI)</span>
+                            <span class="lg-afr">● Measured AFR</span>
+                            <span class="lg-tafr">╌ Target AFR</span>
+                            <span class="lg-fuel">● Rail Delta (58 PSI)</span>
+                        </div>
+                    </div>
+                    <canvas id="wot-pull-canvas" height="95"></canvas>
                 </div>
             </div>
 
@@ -258,6 +283,61 @@
     <!-- Cell Detail Tooltip Popup -->
     <div id="cell-tooltip" class="cell-tooltip hidden"></div>
 
-    <script src="/static/dashboard.js?v=3.1"></script>
+    <!-- Interactive Cell Detail Inspector Modal -->
+    <div id="cell-detail-modal" class="cell-modal hidden">
+        <div class="cell-modal-backdrop" id="cell-modal-backdrop"></div>
+        <div class="cell-modal-content">
+            <div class="cell-modal-header">
+                <div class="cell-modal-title-group">
+                    <span class="modal-icon">🎯</span>
+                    <h3 id="modal-cell-title">160 kPa @ 4500 RPM</h3>
+                </div>
+                <button type="button" id="btn-close-cell-modal" class="modal-close-btn">&times;</button>
+            </div>
+            <div class="cell-modal-body">
+                <div class="modal-metrics-grid">
+                    <div class="modal-card">
+                        <span class="modal-card-label">BASE VE</span>
+                        <span id="modal-base-ve" class="modal-card-val">--</span>
+                    </div>
+                    <div class="modal-card highlight">
+                        <span class="modal-card-label">RECOMMENDED VE</span>
+                        <span id="modal-rec-ve" class="modal-card-val green">--</span>
+                    </div>
+                    <div class="modal-card">
+                        <span class="modal-card-label">APPLIED TRIM</span>
+                        <span id="modal-trim" class="modal-card-val">--</span>
+                    </div>
+                    <div class="modal-card">
+                        <span class="modal-card-label">MEASURED ERROR</span>
+                        <span id="modal-raw-err" class="modal-card-val">--</span>
+                    </div>
+                    <div class="modal-card">
+                        <span class="modal-card-label">STEADY SAMPLES</span>
+                        <span id="modal-hits" class="modal-card-val">--</span>
+                    </div>
+                    <div class="modal-card">
+                        <span class="modal-card-label">CONFIDENCE</span>
+                        <span id="modal-conf" class="modal-card-val">--</span>
+                    </div>
+                    <div class="modal-card">
+                        <span class="modal-card-label">AFR / TARGET</span>
+                        <span id="modal-afr" class="modal-card-val">--</span>
+                    </div>
+                    <div class="modal-card">
+                        <span class="modal-card-label">FUEL RAIL DELTA</span>
+                        <span id="modal-diff-fp" class="modal-card-val">--</span>
+                    </div>
+                </div>
+                <div id="modal-advice-box" class="modal-advice-box"></div>
+            </div>
+            <div class="cell-modal-footer">
+                <button type="button" id="btn-modal-ask-gemini" class="header-btn cta-btn">✨ Ask Gemini About This Cell</button>
+                <button type="button" id="btn-modal-close" class="header-btn secondary-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/dashboard.js?v=3.2"></script>
 </body>
 </html>

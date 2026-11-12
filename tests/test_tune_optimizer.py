@@ -173,3 +173,35 @@ def test_watcher_ignores_empty_or_missing_files(tmp_path):
     assert w._is_stable(str(empty)) is False
     assert w._is_stable(str(tmp_path / "missing.dl")) is False
 
+
+# ── Tune History & Revision Undo ──────────────────────────────────────────
+
+def test_tune_history_save_and_revert():
+    opt = VETableOptimizer()
+    assert opt.get_history() == []
+
+    # Ingest run 1 (lean at 150 kPa, 4000 RPM)
+    _feed(opt, 10, rpm=4000.0, map_kpa=150.0, afr=13.5, target=12.5)
+    rev1 = opt.save_revision(note="Run 1")
+    assert rev1["cells_populated"] == 1
+    assert len(opt.get_history()) == 1
+
+    # Ingest run 2 (rich at 150 kPa, 4000 RPM)
+    opt.reset()
+    _feed(opt, 10, rpm=4000.0, map_kpa=150.0, afr=11.5, target=12.5)
+    rev2 = opt.save_revision(note="Run 2")
+    assert len(opt.get_history()) == 2
+    assert opt.get_history()[0]["id"] == rev2["id"]
+
+    # Current cell shows negative trim (rich)
+    cell_cur = _cell(opt.get_matrix_payload(), 150, 4000)
+    assert cell_cur["correction_pct"] < 0
+
+    # Revert back to Run 1
+    restored = opt.revert_to_revision(rev1["id"])
+    assert restored is not None
+    cell_restored = _cell(restored, 150, 4000)
+    assert cell_restored["correction_pct"] > 0
+    assert cell_restored["hits"] == 10
+
+

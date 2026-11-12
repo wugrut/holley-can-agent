@@ -30,3 +30,10 @@ def test_matrix_endpoint_serves_ui_contract():
         reset = client.post("/api/optimizer/reset").json()
         assert reset["status"] == "success"
         assert reset["matrix"]["safety_alerts"] == []
+
+        hist_res = client.get("/api/optimizer/history").json()
+        assert hist_res["status"] == "success"
+        assert isinstance(hist_res["history"], list)
+
+        rev_res = client.post("/api/optimizer/revert", json={"id": "nonexistent"}).json()
+        assert rev_res["status"] == "error"

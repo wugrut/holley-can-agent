@@ -639,6 +639,22 @@ def create_app(
         pull_detector.recent_scorecards.clear()
         return {"status": "success", "matrix": matrix_with_context()}
 
+    @app.get("/api/optimizer/history")
+    async def optimizer_get_history():
+        """Returns list of past tune revisions in this session."""
+        return {"status": "success", "history": ve_optimizer.get_history()}
+
+    @app.post("/api/optimizer/revert")
+    async def optimizer_revert(payload: dict):
+        """Reverts active VE recommendations to a selected historical revision."""
+        rev_id = (payload or {}).get("id")
+        if not rev_id:
+            return {"status": "error", "message": "Missing revision id"}
+        res = ve_optimizer.revert_to_revision(rev_id)
+        if res is None:
+            return {"status": "error", "message": f"Revision {rev_id} not found"}
+        return {"status": "success", "matrix": matrix_with_context()}
+
     # ── Run Logger API ──────────────────────────────────────────────────
 
     @app.post("/api/log/start")

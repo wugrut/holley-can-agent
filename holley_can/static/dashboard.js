@@ -10,6 +10,7 @@ const state = {
     activeDatalog: null,
     includeLearn: true,
     lastMatrixData: null,
+    selectedCell: null,
     wsConnected: false,
 };
 
@@ -19,6 +20,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initKeyPanel();
     initCopilot();
     initOptimizer();
+    initHistory();
+    initCellModal();
     initDropzone();
     initWebSocket();
     checkCopilotStatus();
@@ -480,11 +483,15 @@ function renderVEMatrix(data) {
     let leanCount = 0;
     let richCount = 0;
 
+    // 1b. Render History dropdown
+    renderHistory(data.tune_history || []);
+
     // 2. Safety banner + scorecard (scorecards are newest-first)
     const scorecards = data.scorecards || [];
     const latest = scorecards.length > 0 ? scorecards[0] : null;
     renderSafetyBanner(data.safety_alerts || [], data.safety_level, latest ? latest.log_name : '');
     renderComparison(data);
+    renderPullChart(latest ? latest.trace : null);
 
     const verdictEl = document.getElementById('scorecard-verdict');
     const badgeEl = document.getElementById('scorecard-badge');
@@ -591,6 +598,9 @@ function initCellTooltips() {
     const cells = document.querySelectorAll('.ve-cell');
 
     cells.forEach(c => {
+        // Open interactive Cell Detail Modal on click
+        c.addEventListener('click', () => openCellModal(c));
+
         c.addEventListener('mouseenter', () => {
             if (!tooltip) return;
             const g = (k) => c.getAttribute(k);
@@ -688,6 +698,267 @@ function showToast(msg) {
     toast.textContent = msg;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 2600);
+}
+
+// ─── History & Revision Undo Manager ────────────────────────────────────────
+
+function initHistory() {
+    const btn = document.getElementById('btn-toggle-history');
+    const dropdown = document.getElementById('history-dropdown');
+
+    if (btn && dropdown) {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dropdown.classList.toggle('hidden');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!dropdown.contains(e.target) && e.target !== btn) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    }
+}
+
+function renderHistory(historyList) {
+    const countEl = document.getElementById('history-count');
+    const listEl = document.getElementById('history-list');
+    if (!listEl) return;
+
+    const list = historyList || [];
+    if (countEl) countEl.textContent = list.length;
+
+    if (list.length === 0) {
+        listEl.innerHTML = '<div style="padding: 12px; color: var(--text-muted); font-size: 11px; text-align: center;">No revisions saved yet.</div>';
+        return;
+    }
+
+    listEl.innerHTML = list.map((rev, idx) => {
+        const timeAgo = Math.max(0, Math.round((Date.now() / 1000) - rev.timestamp));
+        const timeStr = timeAgo < 60 ? `${timeAgo}s ago` : `${Math.round(timeAgo / 60)}m ago`;
+        const isLatest = idx === 0;
+
+        return `
+            <div class="history-item">
+                <div class="history-item-info">
+                    <span class="history-source">${escapeHtml(rev.source)}</span>
+                    <span class="history-meta">${rev.cells_populated} cells • ${rev.total_samples.toLocaleString()} samples • ${timeStr}</span>
+                </div>
+                ${!isLatest ? `<button type="button" class="history-revert-btn" data-id="${rev.id}">↺ Revert</button>` : '<span style="font-size:10px; color:#00e676; font-weight:700;">ACTIVE</span>'}
+            </div>
+        `;
+    }).join('');
+
+    // Attach Revert button click handlers
+    listEl.querySelectorAll('.history-revert-btn').forEach(b => {
+        b.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const revId = b.getAttribute('data-id');
+            if (confirm('Revert 16×16 VE recommendations back to this revision?')) {
+                try {
+                    const res = await fetch('/api/optimizer/revert', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: revId }),
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        renderVEMatrix(data.matrix);
+                        showToast('✓ Successfully Reverted to Previous Revision!');
+                        const dropdown = document.getElementById('history-dropdown');
+                        if (dropdown) dropdown.classList.add('hidden');
+                    } else {
+                        alert(data.message || 'Revert failed.');
+                    }
+                } catch (err) {
+                    console.error('Revert error:', err);
+                    alert('Revert failed: ' + err.message);
+                }
+            }
+        });
+    });
+}
+
+// ─── WOT Pull Telemetry Chart Renderer ──────────────────────────────────────
+
+function renderPullChart(trace) {
+    const wrapper = document.getElementById('pull-chart-wrapper');
+    const canvas = document.getElementById('wot-pull-canvas');
+    if (!wrapper || !canvas) return;
+
+    if (!trace || trace.length < 2) {
+        wrapper.classList.add('hidden');
+        return;
+    }
+
+    wrapper.classList.remove('hidden');
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+
+    const w = rect.width;
+    const h = rect.height;
+
+    // Clear background
+    ctx.fillStyle = '#050a14';
+    ctx.fillRect(0, 0, w, h);
+
+    // Draw horizontal grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1;
+    for (let y = 0.25; y < 1.0; y += 0.25) {
+        ctx.beginPath();
+        ctx.moveTo(0, h * y);
+        ctx.lineTo(w, h * y);
+        ctx.stroke();
+    }
+
+    const n = trace.length;
+    const xStep = w / (n - 1);
+
+    // Helper to plot a normalized curve
+    function drawLine(getValue, minVal, maxVal, color, lineWidth = 2, isDashed = false) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        if (isDashed) {
+            ctx.setLineDash([4, 4]);
+        } else {
+            ctx.setLineDash([]);
+        }
+
+        trace.forEach((pt, i) => {
+            const val = getValue(pt);
+            const norm = Math.max(0, Math.min(1, (val - minVal) / (maxVal - minVal)));
+            const px = i * xStep;
+            const py = h - (norm * (h - 16)) - 8;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // 1. Plot RPM (White) [scaled 2000 to 7000 RPM]
+    drawLine(d => d.rpm, 2000, 7000, 'rgba(248, 250, 252, 0.7)', 1.5);
+
+    // 2. Plot Boost (Cyan) [scaled 0 to 22 PSI]
+    drawLine(d => d.boost, 0, 22, '#00e5ff', 2.5);
+
+    // 3. Plot Target AFR (Dashed Amber) [scaled 10.0 to 15.0 AFR]
+    drawLine(d => d.target_afr, 10.0, 15.0, '#ffe082', 1.5, true);
+
+    // 4. Plot Measured AFR (Green) [scaled 10.0 to 15.0 AFR]
+    drawLine(d => d.afr, 10.0, 15.0, '#00e676', 2.0);
+
+    // 5. Plot Differential Fuel Pressure (Purple / Red if sagging below 55 PSI)
+    drawLine(d => d.diff_fp, 45, 65, '#e040fb', 1.5);
+}
+
+// ─── Interactive Cell Inspector Modal ──────────────────────────────────────
+
+function initCellModal() {
+    const modal = document.getElementById('cell-detail-modal');
+    const closeBtn = document.getElementById('btn-close-cell-modal');
+    const modalCloseBtn = document.getElementById('btn-modal-close');
+    const backdrop = document.getElementById('cell-modal-backdrop');
+    const askBtn = document.getElementById('btn-modal-ask-gemini');
+
+    function closeModal() {
+        if (modal) modal.classList.add('hidden');
+    }
+
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (modalCloseBtn) modalCloseBtn.addEventListener('click', closeModal);
+    if (backdrop) backdrop.addEventListener('click', closeModal);
+
+    if (askBtn) {
+        askBtn.addEventListener('click', () => {
+            if (!state.selectedCell) return;
+            closeModal();
+            const c = state.selectedCell;
+            const boostPsig = Math.max(0, (parseFloat(c.map) - 101.325) * 0.145038);
+            const prompt = `Can you audit the VE cell at ${c.rpm} RPM @ ${c.map} kPa (${boostPsig.toFixed(1)} PSI Boost)? Base VE is ${c.base}%, recommended is ${c.sug}% (${c.corr}% trim applied, measured error was ${c.raw}%). Measured AFR was ${c.afr || 'N/A'} vs Target ${c.tafr || 'N/A'}. Steady samples: ${c.hits}. Does this look safe for our 4.8L Turbo Fairmont?`;
+            if (window.askQuestion) {
+                window.askQuestion(prompt);
+            }
+        });
+    }
+}
+
+function openCellModal(cellElement) {
+    const modal = document.getElementById('cell-detail-modal');
+    if (!modal) return;
+
+    const g = (k) => cellElement.getAttribute(k);
+    const rpm = g('data-rpm');
+    const map = g('data-map');
+    const base = g('data-base');
+    const sug = g('data-sug');
+    const corr = parseFloat(g('data-corr') || 0);
+    const raw = parseFloat(g('data-raw') || corr);
+    const hits = parseInt(g('data-hits') || 0, 10);
+    const conf = g('data-conf') || 'none';
+    const afr = g('data-afr');
+    const tafr = g('data-tafr');
+    const fp = g('data-fp');
+    const knock = parseFloat(g('data-knock') || 0);
+    const limited = g('data-limited') === '1';
+
+    const boostPsig = Math.max(0, (parseFloat(map) - 101.325) * 0.145038);
+
+    state.selectedCell = { rpm, map, base, sug, corr, raw, hits, conf, afr, tafr, fp, knock, limited };
+
+    // Fill Title
+    const titleEl = document.getElementById('modal-cell-title');
+    if (titleEl) {
+        titleEl.textContent = `${map} kPa @ ${rpm} RPM (${boostPsig > 0.4 ? '+' + boostPsig.toFixed(1) + ' PSI Boost' : 'Vacuum'})`;
+    }
+
+    // Fill Metric Cards
+    const setVal = (id, text, color = null) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = text;
+            if (color) el.style.color = color;
+            else el.style.color = '';
+        }
+    };
+
+    setVal('modal-base-ve', `${base}%`);
+    setVal('modal-rec-ve', `${sug}%`, corr > 0 ? '#00e676' : (corr < 0 ? '#ff9100' : ''));
+    setVal('modal-trim', `${corr > 0 ? '+' : ''}${corr.toFixed(1)}%`, corr > 0 ? '#00e676' : (corr < 0 ? '#ff9100' : ''));
+    setVal('modal-raw-err', `${raw > 0 ? '+' : ''}${raw.toFixed(1)}%`);
+    setVal('modal-hits', `${hits}`);
+    setVal('modal-conf', conf.toUpperCase(), conf === 'high' ? '#00e676' : (conf === 'medium' ? '#00e5ff' : '#a0aec0'));
+    setVal('modal-afr', afr ? `${afr} / ${tafr}` : '--');
+    setVal('modal-diff-fp', fp ? `${parseFloat(fp).toFixed(1)} PSI` : '58.0 PSI', fp && parseFloat(fp) < 55 ? '#ff1744' : '#00e676');
+
+    // Contextual Advice
+    const adviceEl = document.getElementById('modal-advice-box');
+    if (adviceEl) {
+        let adviceHtml = '';
+        if (hits === 0) {
+            adviceHtml = '<p style="margin:0; color:#a0aec0;">No steady-state datalog samples recorded in this cell yet. The default 4.8L Sloppy Stage 2 base curve is maintained.</p>';
+        } else if (fp && parseFloat(fp) < 55.0) {
+            adviceHtml = '<p style="margin:0; color:#ff8a80;"><strong>⚠️ FUEL PRESSURE WARNING:</strong> Injector differential pressure dropped below 55 PSI in this cell. <strong>Do NOT add VE fuel</strong> until you verify fuel pump voltage, filter, or regulator reference line!</p>';
+        } else if (knock >= 1.5) {
+            adviceHtml = `<p style="margin:0; color:#ff8a80;"><strong>⚠️ KNOCK RETARD DETECTED (${knock.toFixed(1)}°):</strong> Engine knocked in this cell. Pull 1-2° timing in the Holley ignition table before increasing boost or fuel.</p>`;
+        } else if (limited) {
+            adviceHtml = `<p style="margin:0; color:#ffe082;"><strong>▲ TRIM STEP CAPPED:</strong> Measured AFR error was ${raw > 0 ? '+' : ''}${raw.toFixed(1)}%, but single-pass correction was safely capped at ${corr > 0 ? '+' : ''}${corr.toFixed(1)}%. After flashing, make another pass to allow the cell to fully converge.</p>`;
+        } else if (conf === 'low') {
+            adviceHtml = `<p style="margin:0; color:#a0aec0;"><strong>LOW SAMPLE CONFIDENCE:</strong> This cell only has ${hits} sample(s) (minimum is 5). The correction is held at 0.0% to prevent transient spikes from distorting your table.</p>`;
+        } else {
+            adviceHtml = `<p style="margin:0; color:#cbd5e1;">Steady-state AFR tracking is within safe tolerance. Recommended VE is calculated from ${hits} steady-state samples with Wideband O2 transport delay lookback.</p>`;
+        }
+        adviceEl.innerHTML = adviceHtml;
+    }
+
+    modal.classList.remove('hidden');
 }
 
 // ─── Passive WebSocket & Auto-Watch Coordinator ─────────────────────────────
