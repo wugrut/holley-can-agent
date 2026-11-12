@@ -166,6 +166,24 @@
                     <h2>16×16 FUEL VE OPTIMIZER</h2>
                 </div>
                 <div class="panel-controls">
+                    <div class="terx-dropdown-wrapper">
+                        <button type="button" id="btn-toggle-terx" class="header-btn secondary-btn" title="Select or upload a Holley .terx tune file">
+                            <span>📁</span> <span id="lbl-active-tune">Tune: Default Turbo LS</span>
+                        </button>
+                        <div id="terx-dropdown" class="history-dropdown hidden">
+                            <div class="history-dropdown-header">
+                                <strong>HOLLEY .TERX CALIBRATIONS</strong>
+                                <span class="history-hint">Select to load base VE</span>
+                            </div>
+                            <div id="terx-list" class="history-list"></div>
+                            <div class="terx-upload-row" style="padding: 8px; border-top: 1px solid var(--border-color);">
+                                <input type="file" id="input-upload-terx" accept=".terx" style="display:none">
+                                <button type="button" id="btn-browse-terx" class="header-btn secondary-btn" style="width:100%">
+                                    ⬆️ Upload .terx From Laptop
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <div class="history-dropdown-wrapper">
                         <button type="button" id="btn-toggle-history" class="header-btn secondary-btn" title="View past tune revisions and revert table">
                             <span>⏱️</span> <span>Revisions (<span id="history-count">0</span>)</span>
@@ -264,7 +282,10 @@
             <!-- VE Action Bar & Safety Notice -->
             <div class="ve-action-bar">
                 <div class="action-buttons">
-                    <button type="button" id="btn-copy-ve-grid" class="header-btn cta-btn">
+                    <button type="button" id="btn-save-terx-direct" class="header-btn cta-btn" style="background:#00d084; color:#0b0f14; font-weight:700;" title="Write new VE table directly into a .terx tune file with verified CRC">
+                        💾 Save Directly to .terx Tune
+                    </button>
+                    <button type="button" id="btn-copy-ve-grid" class="header-btn secondary-btn" title="Copy 16x16 table to clipboard for Ctrl+V paste">
                         📋 Copy 16×16 Base VE (Ctrl+V)
                     </button>
                     <button type="button" id="btn-copy-trim-grid" class="header-btn secondary-btn">

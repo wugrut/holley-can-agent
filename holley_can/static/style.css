@@ -849,7 +849,8 @@ body {
 .ve-legend .lg-note { margin-left: auto; }
 
 /* ─── Revisions Dropdown & Undo ─────────────────────────────────────────── */
-.history-dropdown-wrapper {
+.history-dropdown-wrapper,
+.terx-dropdown-wrapper {
     position: relative;
     display: inline-block;
 }

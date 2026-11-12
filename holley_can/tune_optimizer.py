@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional
 
 from .dl_parser import HolleyDatalogParser, discover_local_holley_files
+from .terx_parser import TerxCalibration, discover_terx_files
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +310,8 @@ class VETableOptimizer:
         self._loaded_name: Optional[str] = None
         self._prev_snapshot: Optional[Dict[str, Any]] = None
         self.tune_history: List[Dict[str, Any]] = []
+        self.loaded_terx_path: Optional[str] = None
+        self.loaded_terx_comment: Optional[str] = None
 
         self.rpm_axis = list(RPM_AXIS)
         self.map_axis = list(MAP_AXIS)
@@ -426,6 +429,61 @@ class VETableOptimizer:
         self.total_samples_ingested = target_rev.get("total_samples", 0)
         self.last_source = f"{target_rev.get('source', 'unknown')} (Reverted to {rev_id})"
         return self.get_matrix_payload()
+
+    def load_terx_tune(self, filepath_or_bytes: Union[str, Path, bytes, bytearray]) -> TerxCalibration:
+        """
+        Load a Holley .terx calibration directly into the optimizer.
+        Updates self.rpm_axis, self.map_axis, and self.default_base_ve to match the vehicle's exact tune.
+        """
+        if isinstance(filepath_or_bytes, (bytes, bytearray)):
+            cal = TerxCalibration.from_bytes(filepath_or_bytes)
+        else:
+            cal = TerxCalibration.from_file(filepath_or_bytes)
+
+        if len(cal.rpm_axis) == 16 and len(cal.map_axis) == 16 and len(cal.ve_table) == 16:
+            self.rpm_axis = [int(round(x)) for x in cal.rpm_axis]
+            self.map_axis = [int(round(x)) for x in cal.map_axis]
+            self.default_base_ve = [[round(cell, 2) for cell in row] for row in cal.ve_table]
+            self.loaded_terx_path = str(cal.filepath) if cal.filepath else None
+            self.loaded_terx_comment = cal.tune_comment or (cal.filepath.name if cal.filepath else "Loaded .terx")
+            # Reset grid accumulators for the new calibration axis dimensions
+            self.grid = [[VECellAccumulator() for _ in range(16)] for _ in range(16)]
+            self.total_samples_ingested = 0
+            self.last_source = f"TERX: {cal.filepath.name if cal.filepath else 'custom'}"
+            self.save_revision()
+
+        return cal
+
+    def export_to_terx(
+        self,
+        target_path: Union[str, Path],
+        source_path: Optional[Union[str, Path]] = None,
+        include_learn: bool = True,
+    ) -> TerxCalibration:
+        """
+        Export the recommended VE table directly into a .terx calibration file.
+        If source_path is omitted, uses the previously loaded .terx path.
+        """
+        src = source_path or self.loaded_terx_path
+        if not src:
+            raise ValueError("No source .terx calibration specified or previously loaded")
+
+        cal = TerxCalibration.from_file(src)
+        payload = self.get_matrix_payload(include_learn=include_learn, include_comparison=False)
+
+        # Build 16x16 matrix ordered by MAP ascending (0..15) as expected by TerxCalibration
+        new_ve_grid = [[self.default_base_ve[m][r] for r in range(16)] for m in range(16)]
+        for row in payload["rows"]:
+            for cell in row["cells"]:
+                m_val = cell["map_kpa"]
+                r_val = cell["rpm"]
+                m_idx = _nearest_index(self.map_axis, m_val)
+                r_idx = _nearest_index(self.rpm_axis, r_val)
+                new_ve_grid[m_idx][r_idx] = float(cell["recommended_ve"])
+
+        cal.update_ve_table(new_ve_grid)
+        cal.save(target_path)
+        return cal
 
     def get_history(self) -> List[Dict[str, Any]]:
         """Returns summary list of past tune revisions (newest first)."""
@@ -878,6 +936,8 @@ class VETableOptimizer:
             "knock_cells": knock_cells,
             "rpm_axis": self.rpm_axis,
             "map_axis_desc": list(reversed(self.map_axis)),
+            "loaded_terx_path": self.loaded_terx_path,
+            "loaded_terx_comment": self.loaded_terx_comment,
             "rows": rows_out,
             "holley_tsv_ve": "\r\n".join(tsv_ve_lines),
             "holley_tsv_correction_pct": "\r\n".join(tsv_corr_lines),

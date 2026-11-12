@@ -379,7 +379,158 @@ function initOptimizer() {
         });
     }
 
+    initTerxControls();
     loadVEMatrix();
+}
+
+function initTerxControls() {
+    const toggleBtn = document.getElementById('btn-toggle-terx');
+    const dropdown = document.getElementById('terx-dropdown');
+    const browseBtn = document.getElementById('btn-browse-terx');
+    const uploadInput = document.getElementById('input-upload-terx');
+    const saveDirectBtn = document.getElementById('btn-save-terx-direct');
+
+    if (toggleBtn && dropdown) {
+        toggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = dropdown.classList.contains('hidden');
+            dropdown.classList.toggle('hidden');
+            if (willOpen) loadTerxList();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!dropdown.contains(e.target) && e.target !== toggleBtn) {
+                dropdown.classList.add('hidden');
+            }
+        });
+    }
+
+    if (browseBtn && uploadInput) {
+        browseBtn.addEventListener('click', () => uploadInput.click());
+        uploadInput.addEventListener('change', async () => {
+            if (!uploadInput.files || uploadInput.files.length === 0) return;
+            const file = uploadInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                showToast(`Uploading and validating ${file.name}...`);
+                const res = await fetch('/api/terx/upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    renderVEMatrix(data.matrix);
+                    showToast(`✓ Loaded calibration: ${data.filename} (CRC: ${data.calibration.stored_crc})`);
+                    if (dropdown) dropdown.classList.add('hidden');
+                } else {
+                    alert('Failed to load .terx: ' + data.message);
+                }
+            } catch (err) {
+                console.error('Upload error:', err);
+                alert('Upload error: ' + err.message);
+            }
+        });
+    }
+
+    if (saveDirectBtn) {
+        saveDirectBtn.addEventListener('click', async () => {
+            try {
+                saveDirectBtn.disabled = true;
+                saveDirectBtn.textContent = '⏳ Saving .terx...';
+                const res = await fetch('/api/terx/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ include_learn: state.includeLearn }),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showToast(`✓ Exported verified tune: ${data.output_filename} (CRC: ${data.crc})!`);
+                    // Trigger browser download
+                    const dlLink = document.createElement('a');
+                    dlLink.href = data.download_url;
+                    dlLink.download = data.output_filename;
+                    document.body.appendChild(dlLink);
+                    dlLink.click();
+                    document.body.removeChild(dlLink);
+                } else {
+                    alert('Export failed: ' + data.message);
+                }
+            } catch (err) {
+                console.error('Save error:', err);
+                alert('Save error: ' + err.message);
+            } finally {
+                saveDirectBtn.disabled = false;
+                saveDirectBtn.textContent = '💾 Save Directly to .terx Tune';
+            }
+        });
+    }
+}
+
+async function loadTerxList() {
+    const listEl = document.getElementById('terx-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<div style="padding:10px; color:#90caf9; font-size:11px;">Scanning system for .terx files...</div>';
+
+    try {
+        const res = await fetch('/api/terx/discover');
+        const data = await res.json();
+        const cals = data.calibrations || [];
+
+        if (cals.length === 0) {
+            listEl.innerHTML = '<div style="padding:10px; color:#888; font-size:11px;">No .terx files found on Desktop or Documents.</div>';
+            return;
+        }
+
+        listEl.innerHTML = cals.map(c => {
+            const isVerified = c.checksum_verified;
+            const badge = isVerified 
+                ? `<span style="color:#00e676; font-size:10px; font-weight:700;">✓ CRC ${c.crc || 'OK'}</span>`
+                : `<span style="color:#ff5252; font-size:10px; font-weight:700;">⚠️ Checksum Mismatch</span>`;
+            const comment = c.tune_comment ? `<div style="font-size:10px; color:#8899aa; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(c.tune_comment)}</div>` : '';
+
+            return `
+                <div class="history-item" style="cursor:default;">
+                    <div class="history-item-info" style="flex:1; min-width:0;">
+                        <span class="history-source" title="${escapeHtml(c.path)}" style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(c.filename)}</span>
+                        ${comment}
+                        <div style="font-size:10px; color:#607d8b;">${(c.filesize_bytes/1024).toFixed(0)} KB • ${badge}</div>
+                    </div>
+                    <button type="button" class="history-revert-btn btn-load-terx" data-path="${escapeHtml(c.path)}" style="align-self:center;">Load</button>
+                </div>
+            `;
+        }).join('');
+
+        listEl.querySelectorAll('.btn-load-terx').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const path = btn.getAttribute('data-path');
+                try {
+                    showToast(`Loading calibration: ${path}...`);
+                    const res = await fetch('/api/terx/load', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: path }),
+                    });
+                    const loadData = await res.json();
+                    if (loadData.status === 'success') {
+                        renderVEMatrix(loadData.matrix);
+                        showToast(`✓ Loaded ${loadData.calibration.filename} (CRC: ${loadData.calibration.stored_crc})`);
+                        const dropdown = document.getElementById('terx-dropdown');
+                        if (dropdown) dropdown.classList.add('hidden');
+                    } else {
+                        alert('Failed to load .terx: ' + loadData.message);
+                    }
+                } catch (err) {
+                    console.error('Load error:', err);
+                    alert('Load error: ' + err.message);
+                }
+            });
+        });
+    } catch (err) {
+        console.error('Discover error:', err);
+        listEl.innerHTML = `<div style="padding:10px; color:#ff5252; font-size:11px;">Scan error: ${err.message}</div>`;
+    }
 }
 
 async function loadVEMatrix() {
@@ -479,6 +630,17 @@ function renderVEMatrix(data) {
     if (lowEl) lowEl.textContent = data.low_confidence_cells || 0;
     if (stepEl && data.max_step_pct !== undefined) stepEl.textContent = data.max_step_pct;
     if (sourceEl) sourceEl.textContent = data.last_source || 'Documents\\Holley';
+
+    // Update active tune button label
+    const tuneLabel = document.getElementById('lbl-active-tune');
+    if (tuneLabel) {
+        if (data.loaded_terx_comment) {
+            tuneLabel.textContent = `Tune: ${data.loaded_terx_comment}`;
+        } else if (data.loaded_terx_path) {
+            const parts = data.loaded_terx_path.split(/[\\/]/);
+            tuneLabel.textContent = `Tune: ${parts[parts.length - 1]}`;
+        }
+    }
 
     let leanCount = 0;
     let richCount = 0;

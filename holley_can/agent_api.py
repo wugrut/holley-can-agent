@@ -655,6 +655,143 @@ def create_app(
             return {"status": "error", "message": f"Revision {rev_id} not found"}
         return {"status": "success", "matrix": matrix_with_context()}
 
+    # ── Terminator X .terx Calibration Reverse Engineering API ─────────
+
+    @app.get("/api/terx/discover")
+    async def discover_terx_endpoint():
+        """Scans Desktop, Documents/Holley, and Drive for Terminator X .terx calibration files."""
+        from .terx_parser import TerxCalibration, discover_terx_files
+        found_paths = discover_terx_files()
+        cals_out = []
+        for p in found_paths[:25]:
+            try:
+                cal = TerxCalibration.from_file(p)
+                cals_out.append({
+                    "path": str(p),
+                    "filename": p.name,
+                    "filesize_bytes": p.stat().st_size,
+                    "mtime": p.stat().st_mtime,
+                    "checksum_verified": cal.checksum_verified,
+                    "crc": f"0x{cal.stored_crc:08X}",
+                    "tune_comment": cal.tune_comment,
+                    "wizard_version": cal.wizard_version,
+                })
+            except Exception as e:
+                logger.debug("Failed to inspect %s: %s", p, e)
+                cals_out.append({
+                    "path": str(p),
+                    "filename": p.name,
+                    "filesize_bytes": p.stat().st_size,
+                    "mtime": p.stat().st_mtime,
+                    "checksum_verified": False,
+                    "error": str(e),
+                })
+        return {
+            "status": "success",
+            "count": len(cals_out),
+            "calibrations": cals_out,
+            "active_tune": getattr(ve_optimizer, "loaded_terx_path", None),
+        }
+
+    @app.post("/api/terx/load")
+    async def load_terx_endpoint(payload: Optional[dict] = None):
+        """Loads a chosen local .terx tune file directly into the optimizer as the active base tune."""
+        file_path = (payload or {}).get("path")
+        if not file_path:
+            return {"status": "error", "message": "Missing file path"}
+
+        try:
+            cal = ve_optimizer.load_terx_tune(file_path)
+            return {
+                "status": "success",
+                "message": f"Successfully loaded calibration: {Path(file_path).name}",
+                "calibration": cal.to_dict(),
+                "matrix": matrix_with_context(),
+            }
+        except Exception as e:
+            logger.error("Failed to load .terx tune %s: %s", file_path, e)
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/terx/upload")
+    async def upload_terx_endpoint(file: UploadFile = File(...)):
+        """Uploads a .terx calibration directly from the web browser and activates it."""
+        upload_dir = Path("./data/calibrations")
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = upload_dir / file.filename
+        content = await file.read()
+        dest_path.write_bytes(content)
+
+        try:
+            cal = ve_optimizer.load_terx_tune(dest_path)
+            return {
+                "status": "success",
+                "filename": file.filename,
+                "path": str(dest_path),
+                "calibration": cal.to_dict(),
+                "matrix": matrix_with_context(),
+            }
+        except Exception as e:
+            logger.error("Failed to parse uploaded .terx: %s", e)
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/terx/export")
+    async def export_terx_endpoint(payload: Optional[dict] = None):
+        """
+        Exports the Copilot's recommended VE table into a new, valid .terx file with verified CRC.
+        Saves as a new revision (e.g. <tune>_copilot_v1.terx), never overwriting the original.
+        """
+        source_path = (payload or {}).get("source_path") or getattr(ve_optimizer, "loaded_terx_path", None)
+        include_learn = (payload or {}).get("include_learn", True)
+
+        if not source_path:
+            # Fallback to discovering the latest Fairmont calibration
+            from .terx_parser import discover_terx_files
+            found = discover_terx_files()
+            if found:
+                source_path = str(found[0])
+            else:
+                return {"status": "error", "message": "No base .terx file loaded or found to clone from."}
+
+        try:
+            src_p = Path(source_path)
+            export_dir = src_p.parent
+            base_stem = src_p.stem
+            # Version naming
+            rev_idx = 1
+            while True:
+                out_name = f"{base_stem}_copilot_v{rev_idx}.terx"
+                out_p = export_dir / out_name
+                if not out_p.exists():
+                    break
+                rev_idx += 1
+
+            cal = ve_optimizer.export_to_terx(out_p, source_path=src_p, include_learn=include_learn)
+            return {
+                "status": "success",
+                "message": f"Exported verified calibration to {out_name}",
+                "output_filename": out_name,
+                "output_path": str(out_p),
+                "crc": f"0x{cal.stored_crc:08X}",
+                "checksum_verified": cal.checksum_verified,
+                "download_url": f"/api/terx/download?path={out_p.as_posix()}",
+            }
+        except Exception as e:
+            logger.error("Failed to export .terx tune: %s", e)
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/terx/download")
+    async def download_terx_endpoint(path: str = Query(..., description="Absolute path to .terx file")):
+        """Streams a .terx binary calibration to the browser for download."""
+        from fastapi.responses import FileResponse
+        p = Path(path)
+        if not p.exists() or p.suffix.lower() != ".terx":
+            return {"status": "error", "message": "File not found or not a .terx file"}
+        return FileResponse(
+            path=str(p),
+            media_type="application/octet-stream",
+            filename=p.name,
+        )
+
     # ── Run Logger API ──────────────────────────────────────────────────
 
     @app.post("/api/log/start")

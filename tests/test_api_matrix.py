@@ -37,3 +37,9 @@ def test_matrix_endpoint_serves_ui_contract():
 
         rev_res = client.post("/api/optimizer/revert", json={"id": "nonexistent"}).json()
         assert rev_res["status"] == "error"
+
+        # Test TERX discover API
+        disc_res = client.get("/api/terx/discover").json()
+        assert disc_res["status"] == "success"
+        assert "calibrations" in disc_res
+        assert isinstance(disc_res["calibrations"], list)
