@@ -37,18 +37,83 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s │ %(levelname)-8s │ %(name)-22s │ %(message)s",
-    datefmt="%H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("efi-copilot")
 
 
-# ─── Configuration Loader ───────────────────────────────────────────────────
+# ─── Configuration & Diagnostic Logging Loader ────────────────────────────────
 
 def get_base_path() -> Path:
     """Returns the root directory of the application (handles PyInstaller bundles)."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent
+
+
+def setup_diagnostic_logging() -> List[Path]:
+    """
+    Attaches rotating file log handlers to <base_path>/logs/holley_copilot.log
+    and (if Google Drive is mounted at G:\\My Drive\\Holley) mirrors logs there
+    so connection issues on a tuning laptop sync straight back automatically.
+    """
+    from logging.handlers import RotatingFileHandler
+
+    log_paths: List[Path] = []
+    fmt = logging.Formatter(
+        "%(asctime)s │ %(levelname)-8s │ %(name)-22s │ %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    root = logging.getLogger()
+
+    candidate_dirs = [get_base_path() / "logs"]
+    gdrive_dir = Path("G:/My Drive/Holley/logs")
+    if Path("G:/My Drive/Holley").exists() and gdrive_dir.resolve() != candidate_dirs[0].resolve():
+        candidate_dirs.append(gdrive_dir)
+
+    for log_dir in candidate_dirs:
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "holley_copilot.log"
+            handler = RotatingFileHandler(
+                log_file,
+                maxBytes=3 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(fmt)
+            root.addHandler(handler)
+            log_paths.append(log_file)
+        except Exception as e:
+            logger.warning("Could not initialize file logger at %s: %s", log_dir, e)
+
+    return log_paths
+
+
+def log_hardware_environment(context: str = "startup") -> None:
+    """Logs OS, USB-CAN adapter enumeration, and Holley software lock state."""
+    import json
+    import platform
+
+    logger.info("=== DIAGNOSTIC SNAPSHOT (%s) ===", context)
+    logger.info(
+        "Host=%s | OS=%s | Python=%s | Frozen=%s | Base=%s",
+        platform.node(),
+        platform.platform(),
+        platform.python_version(),
+        getattr(sys, "frozen", False),
+        get_base_path(),
+    )
+    try:
+        from app.hardware.detection import check_holley_software_lock, discover_available_adapters
+
+        lock_info = check_holley_software_lock()
+        adapters = discover_available_adapters()
+        logger.info("Holley software lock check: %s", json.dumps(lock_info))
+        logger.info("Discovered CAN adapters: %s", json.dumps(adapters))
+    except Exception as e:
+        logger.warning("Hardware environment probe failed: %s", e, exc_info=True)
 
 
 def load_config(config_path: Optional[str] = None) -> dict:
@@ -618,11 +683,15 @@ def main() -> None:
     sim_p.add_argument("--vehicle-name", type=str, default="Holley Terminator X MAX Vehicle", help="Vehicle identifier")
 
     args = parser.parse_args()
+    log_files = setup_diagnostic_logging()
     config = load_config(args.config)
     can_cfg = config.get("can", {})
 
     # Default to 'dashboard' if no subcommand provided (e.g. user double-clicked .exe)
     command = args.command or "dashboard"
+    if log_files:
+        logger.info("Diagnostic log file(s): %s", ", ".join(str(p) for p in log_files))
+    log_hardware_environment(f"command:{command}")
 
     def default_channel_for_interface(iface: str) -> str:
         if iface in ("holley", "holley_usbcan"):
@@ -633,54 +702,60 @@ def main() -> None:
             return "PCAN_USBBUS1"
         return "can0"
 
-    if command == "preflight":
-        iface = getattr(args, "interface", None) or can_cfg.get("interface", "holley")
-        chan = getattr(args, "channel", None) or can_cfg.get("channel") or default_channel_for_interface(iface)
-        br = getattr(args, "bitrate", None) or can_cfg.get("bitrate", 1_000_000)
-        asyncio.run(run_preflight(interface=iface, channel=chan, bitrate=br, sniff_seconds=getattr(args, "seconds", 12.0)))
+    try:
+        if command == "preflight":
+            iface = getattr(args, "interface", None) or can_cfg.get("interface", "holley")
+            chan = getattr(args, "channel", None) or can_cfg.get("channel") or default_channel_for_interface(iface)
+            br = getattr(args, "bitrate", None) or can_cfg.get("bitrate", 1_000_000)
+            asyncio.run(run_preflight(interface=iface, channel=chan, bitrate=br, sniff_seconds=getattr(args, "seconds", 12.0)))
 
-    elif command in ("copilot", "simulator"):
-        arg_iface = getattr(args, "interface", None)
-        arg_chan = getattr(args, "channel", None)
-        arg_br = getattr(args, "bitrate", None)
-        is_sim = command == "simulator" or (arg_iface in ("simulator", "virtual"))
-        iface = "simulator" if is_sim else (arg_iface or can_cfg.get("interface", "holley"))
-        chan = "sim_virtual0" if is_sim else (arg_chan or can_cfg.get("channel") or default_channel_for_interface(iface))
-        br = arg_br or can_cfg.get("bitrate", 1_000_000)
-        scenario = getattr(args, "scenario", "wot_pull_lean_dev")
-        dur = getattr(args, "duration", 10.0)
+        elif command in ("copilot", "simulator"):
+            arg_iface = getattr(args, "interface", None)
+            arg_chan = getattr(args, "channel", None)
+            arg_br = getattr(args, "bitrate", None)
+            is_sim = command == "simulator" or (arg_iface in ("simulator", "virtual"))
+            iface = "simulator" if is_sim else (arg_iface or can_cfg.get("interface", "holley"))
+            chan = "sim_virtual0" if is_sim else (arg_chan or can_cfg.get("channel") or default_channel_for_interface(iface))
+            br = arg_br or can_cfg.get("bitrate", 1_000_000)
+            scenario = getattr(args, "scenario", "wot_pull_lean_dev")
+            dur = getattr(args, "duration", 10.0)
 
-        asyncio.run(
-            run_copilot_session(
+            asyncio.run(
+                run_copilot_session(
+                    interface=iface,
+                    channel=chan,
+                    bitrate=br,
+                    scenario_name=scenario,
+                    duration_s=dur,
+                    db_path=getattr(args, "db", "./data/copilot_sessions.db"),
+                    out_dir=getattr(args, "out_dir", "./reports"),
+                    vehicle_name=getattr(args, "vehicle_name", "Holley Terminator X MAX Vehicle"),
+                )
+            )
+
+        elif command == "dashboard":
+            raw_iface = getattr(args, "interface", None) or can_cfg.get("interface")
+            if not raw_iface or (sys.platform == "win32" and raw_iface == "socketcan"):
+                iface = "holley"
+            else:
+                iface = raw_iface
+            chan = getattr(args, "channel", None) or can_cfg.get("channel") or default_channel_for_interface(iface)
+            br = getattr(args, "bitrate", None) or can_cfg.get("bitrate", 1_000_000)
+            port = getattr(args, "port", None) or config.get("api", {}).get("port", 8420)
+            no_browser = getattr(args, "no_browser", False)
+            run_dashboard(
                 interface=iface,
                 channel=chan,
                 bitrate=br,
-                scenario_name=scenario,
-                duration_s=dur,
-                db_path=getattr(args, "db", "./data/copilot_sessions.db"),
-                out_dir=getattr(args, "out_dir", "./reports"),
-                vehicle_name=getattr(args, "vehicle_name", "Holley Terminator X MAX Vehicle"),
+                port=port,
+                open_browser=not no_browser,
+                config_dict=config,
             )
-        )
-
-    elif command == "dashboard":
-        raw_iface = getattr(args, "interface", None) or can_cfg.get("interface")
-        if not raw_iface or (sys.platform == "win32" and raw_iface == "socketcan"):
-            iface = "holley"
-        else:
-            iface = raw_iface
-        chan = getattr(args, "channel", None) or can_cfg.get("channel") or default_channel_for_interface(iface)
-        br = getattr(args, "bitrate", None) or can_cfg.get("bitrate", 1_000_000)
-        port = getattr(args, "port", None) or config.get("api", {}).get("port", 8420)
-        no_browser = getattr(args, "no_browser", False)
-        run_dashboard(
-            interface=iface,
-            channel=chan,
-            bitrate=br,
-            port=port,
-            open_browser=not no_browser,
-            config_dict=config,
-        )
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user (Ctrl+C).")
+    except Exception:
+        logger.exception("Fatal error during '%s' execution", command)
+        raise
 
 
 if __name__ == "__main__":

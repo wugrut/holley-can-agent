@@ -56,3 +56,10 @@ def test_matrix_endpoint_serves_ui_contract():
         assert "fuel_pressure" in names
         assert "knock_retard" in names
         assert "trans_temp" in names
+
+        # Test Hardware Diagnostics Log API
+        diag_res = client.get("/api/hardware/diagnostics_log")
+        assert diag_res.status_code == 200
+        diag_data = diag_res.json()
+        assert diag_data["status"] == "success"
+        assert "HOLLEY EFI COPILOT CONNECTION DIAGNOSTIC REPORT" in diag_data["text_report"]

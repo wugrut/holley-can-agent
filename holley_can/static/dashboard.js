@@ -1472,6 +1472,25 @@ function initLiveDashboard() {
     if (modalCancel) modalCancel.addEventListener('click', closeGaugeModal);
     if (gaugeForm) gaugeForm.addEventListener('submit', saveGaugeConfig);
 
+    // 4b. One-click Diagnostic Log Copy
+    const btnDiagLog = document.getElementById('btn-copy-diag-log');
+    if (btnDiagLog) {
+        btnDiagLog.addEventListener('click', async () => {
+            try {
+                const res = await fetch('/api/hardware/diagnostics_log');
+                const data = await res.json();
+                if (data.text_report) {
+                    await navigator.clipboard.writeText(data.text_report);
+                    showToast('🩺 Connection diagnostic log copied to clipboard — paste into chat!');
+                } else {
+                    showToast('⚠️ No diagnostic report returned');
+                }
+            } catch (err) {
+                showToast('❌ Failed to fetch diagnostic log');
+            }
+        });
+    }
+
     // 5. Fetch Full Channel Catalog from API
     fetchChannelCatalog();
 

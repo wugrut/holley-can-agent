@@ -483,6 +483,52 @@ def create_app(
             "stats": listener.stats,
         }
 
+    @app.get("/api/hardware/diagnostics_log")
+    async def get_hardware_diagnostics_log():
+        """Returns a formatted connection diagnostic report + recent log lines for troubleshooting."""
+        lock_info: dict[str, Any] = {"locked": False, "processes": []}
+        adapters: list[dict[str, Any]] = []
+        try:
+            from app.hardware.detection import check_holley_software_lock, discover_available_adapters
+            lock_info = check_holley_software_lock()
+            adapters = discover_available_adapters()
+        except Exception as e:
+            adapters = [{"error": str(e)}]
+
+        log_tail = ""
+        log_path_used = None
+        candidates = [
+            Path(sys.executable).parent / "logs" / "holley_copilot.log",
+            Path(__file__).resolve().parent.parent / "logs" / "holley_copilot.log",
+            Path.cwd() / "logs" / "holley_copilot.log",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                log_path_used = str(candidate)
+                try:
+                    lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+                    log_tail = "\n".join(lines[-120:])
+                except Exception as e:
+                    log_tail = f"Error reading log: {e}"
+                break
+
+        report_lines = [
+            "=== HOLLEY EFI COPILOT CONNECTION DIAGNOSTIC REPORT ===",
+            f"Interface: {getattr(listener, 'interface', 'unknown')} | Channel: {getattr(listener, 'channel', 'unknown')} | Bitrate: {getattr(listener, 'bitrate', 1_000_000)}",
+            f"Listener Running: {getattr(listener, '_running', False)} | ECU Serial: {getattr(listener, 'ecu_serial', None)}",
+            f"Stats: {json.dumps(getattr(listener, 'stats', {}), default=str)}",
+            f"WinUSB Lock: {json.dumps(lock_info, default=str)}",
+            f"Adapters: {json.dumps(adapters, indent=2, default=str)}",
+            f"Log File: {log_path_used or 'Not created yet (run via Holley_EFI_Copilot.exe or portable_entry.py)'}",
+            "--- RECENT LOG LINES ---",
+            log_tail or "(no log lines recorded)",
+        ]
+        return {
+            "status": "success",
+            "log_path": log_path_used,
+            "text_report": "\n".join(report_lines),
+        }
+
     @app.get("/api/hardware/adapters")
     async def get_hardware_adapters():
         """Scans the host system for physical and virtual CAN hardware interfaces."""
