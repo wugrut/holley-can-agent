@@ -1475,27 +1475,41 @@ function initLiveDashboard() {
     // 5. Fetch Full Channel Catalog from API
     fetchChannelCatalog();
 
-    // 6. Load Initial Preset
+    // 6. Load Initial Preset & Restore Active View
     loadDashPreset(state.dashPreset || 'drag');
+    switchViewMode(localStorage.getItem('holley_active_view') || 'live');
 }
 
 function switchViewMode(mode) {
     state.activeView = mode;
+    localStorage.setItem('holley_active_view', mode);
     const btnTuning = document.getElementById('tab-btn-tuning');
     const btnLiveDash = document.getElementById('tab-btn-live-dash');
     const tuningWorkspace = document.getElementById('tuning-workspace');
     const liveDashView = document.getElementById('live-dashboard-view');
 
     if (mode === 'live') {
-        if (btnTuning) btnTuning.classList.remove('active');
-        if (btnLiveDash) btnLiveDash.classList.add('active');
+        if (btnTuning) {
+            btnTuning.classList.remove('active');
+            btnTuning.setAttribute('aria-selected', 'false');
+        }
+        if (btnLiveDash) {
+            btnLiveDash.classList.add('active');
+            btnLiveDash.setAttribute('aria-selected', 'true');
+        }
         if (tuningWorkspace) tuningWorkspace.classList.add('hidden');
         if (liveDashView) liveDashView.classList.remove('hidden');
         // Render gauges to measure canvas sizes correctly
         setTimeout(renderGaugeGrid, 50);
     } else {
-        if (btnLiveDash) btnLiveDash.classList.remove('active');
-        if (btnTuning) btnTuning.classList.add('active');
+        if (btnLiveDash) {
+            btnLiveDash.classList.remove('active');
+            btnLiveDash.setAttribute('aria-selected', 'false');
+        }
+        if (btnTuning) {
+            btnTuning.classList.add('active');
+            btnTuning.setAttribute('aria-selected', 'true');
+        }
         if (liveDashView) liveDashView.classList.add('hidden');
         if (tuningWorkspace) tuningWorkspace.classList.remove('hidden');
     }

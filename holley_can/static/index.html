@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=3.1">
+    <link rel="stylesheet" href="/static/style.css?v=3.2">
 </head>
 <body>
     <!-- Top Header -->
@@ -21,40 +21,30 @@
                     <span class="logo-subtitle">1980 Ford Fairmont 4.8L Turbo LS • Terminator X MAX</span>
                 </div>
             </div>
+        </div>
+
+        <div class="header-center">
             <nav class="view-mode-tabs" role="tablist">
-                <button type="button" id="tab-btn-tuning" class="view-tab-btn active" role="tab" aria-selected="true" title="Switch to AI Calibration & VE Optimizer Studio">
-                    <span>🎯</span> <span>Tuning Studio</span>
+                <button type="button" id="tab-btn-live-dash" class="view-tab-btn" role="tab" aria-selected="false" title="Full-screen live gauges, presets &amp; circuit health">
+                    <span>⚡</span> <span>Live Dash</span>
                 </button>
-                <button type="button" id="tab-btn-live-dash" class="view-tab-btn" role="tab" aria-selected="false" title="Switch to Real-Time Customizable Digital HUD">
-                    <span>⚡</span> <span>Live Digital HUD</span>
+                <button type="button" id="tab-btn-tuning" class="view-tab-btn active" role="tab" aria-selected="true" title="AI Calibration Copilot &amp; 16×16 VE Table Optimizer">
+                    <span>🎯</span> <span>Tuning Studio</span>
                 </button>
             </nav>
         </div>
 
-        <div class="header-center">
-            <div id="gemini-status-pill" class="status-pill offline" title="Click to configure Gemini API Key">
-                <span class="status-dot"></span>
-                <span id="gemini-status-text">CHECKING AI...</span>
-            </div>
-            <button type="button" id="btn-toggle-key-panel" class="header-btn secondary-btn" title="Set Gemini API Key">
-                <span>🔑</span> <span>Gemini Key</span>
-            </button>
+        <div class="header-right">
             <div id="log-status-pill" class="status-pill watcher" title="Auto-watch status for Documents\Holley\Data Logs">
                 <span class="status-dot green"></span>
                 <span id="log-status-text">Auto-Watch Active</span>
             </div>
-        </div>
-
-        <div class="header-right">
-            <button type="button" id="btn-copy-ve-header" class="header-btn cta-btn" title="Copy 16x16 Base VE table to clipboard for Holley software (Ctrl+V)">
-                <span>📋</span> <span>COPY 16×16 VE (CTRL+V)</span>
-            </button>
-            <button type="button" id="btn-upload-datalog-trigger" class="header-btn secondary-btn" title="Upload a .dl or .dlz datalog from disk">
-                <span>📂</span> <span>Load Datalog</span>
-            </button>
-            <input type="file" id="datalog-file-input" accept=".dl,.dlz,.csv" style="display: none;">
-            <button type="button" id="btn-reset-optimizer" class="header-btn icon-btn" title="Reset accumulator cells for a fresh tuning pass">
-                <span>🗑️</span>
+            <div id="gemini-status-pill" class="status-pill offline" title="Gemini AI Status">
+                <span class="status-dot"></span>
+                <span id="gemini-status-text">CHECKING AI...</span>
+            </div>
+            <button type="button" id="btn-toggle-key-panel" class="header-btn icon-btn" title="Configure Gemini API Key">
+                <span>🔑</span>
             </button>
         </div>
     </header>
@@ -95,7 +85,13 @@
                     <span class="panel-icon">🤖</span>
                     <h2>AI CALIBRATION COPILOT</h2>
                 </div>
-                <span id="copilot-model-badge" class="badge">Gemini 2.5 Flash</span>
+                <div class="panel-controls">
+                    <button type="button" id="btn-upload-datalog-trigger" class="header-btn secondary-btn" title="Upload a .dl or .dlz datalog from disk">
+                        <span>📂</span> <span>Load Datalog</span>
+                    </button>
+                    <input type="file" id="datalog-file-input" accept=".dl,.dlz,.csv" style="display: none;">
+                    <span id="copilot-model-badge" class="badge">Gemini 2.5 Flash</span>
+                </div>
             </div>
 
             <!-- Active Datalog Dropzone Banner -->
@@ -208,6 +204,9 @@
                         <input type="checkbox" id="check-fold-learn" checked>
                         <span>Fold Fuel Learn % into Base VE</span>
                     </label>
+                    <button type="button" id="btn-reset-optimizer" class="header-btn icon-btn" title="Reset accumulator cells for a fresh tuning pass">
+                        <span>🗑️</span>
+                    </button>
                 </div>
             </div>
 
@@ -504,6 +503,6 @@
         </div>
     </div>
 
-    <script src="/static/dashboard.js?v=3.3"></script>
+    <script src="/static/dashboard.js?v=3.4"></script>
 </body>
 </html>
