@@ -10,7 +10,8 @@ This field guide is designed for automotive tuners, calibrators, and dyno operat
 1. **Copy `Holley_EFI_Copilot.exe`** to your tuning laptop (desktop or any folder, or run directly from Google Drive / USB stick).
 2. **Double-click `Holley_EFI_Copilot.exe`**.
    - No Python installation, virtual environments, or batch files required.
-   - The app automatically launches the local server and opens your default web browser to `http://localhost:8420`.
+   - The app automatically launches the local server, creates persistent diagnostic logs (`logs/holley_copilot.log`), and opens your default web browser to `http://localhost:8420`.
+   - Toggle between **`⚡ Live Dash`** (high-contrast digital instrumentation HUD) and **`🎯 Tuning Studio`** (dual-panel AI Calibration & 16×16 VE Optimizer) using the top header buttons.
    - The **Zero-Touch Auto-Pilot File Watcher** immediately begins monitoring your default Holley datalog and tune folders.
 3. **Set your Google Gemini API Key** (optional, recommended for live AI commentary):
    - Click the ⚙️ Settings gear in the header.
@@ -103,7 +104,7 @@ To transmit telemetry over CAN, the Terminator X / X MAX ECU broadcast must be e
 
 ## 5. Step-by-Step Zero-Touch Field Tuning Workflow
 
-`
+```
  ┌────────────────────────┐
  │ Step 1: Launch App     │  Double-click 'Holley_EFI_Copilot.exe' on laptop.
  │ Zero-Touch Auto-Watch  │  Studio UI opens in browser; watcher polls Holley folders.
@@ -120,29 +121,37 @@ To transmit telemetry over CAN, the Terminator X / X MAX ECU broadcast must be e
  └───────────┬────────────┘
              ▼
  ┌────────────────────────┐
- │ Step 4: 1-Click Copy   │  Click 'Copy 16×16 VE (Ctrl+V)' in the studio UI.
- │ & Paste to Holley Tune │  Open Holley VE Table, select top-left cell, press Ctrl+V.
+ │ Step 4: Save / Copy    │  Click '💾 Save to .terx' to patch your tune binary directly,
+ │ & Paste to Holley Tune │  or '📋 Copy 16×16 VE' and press Ctrl+V into Holley Fuel ICF.
  └───────────┬────────────┘
              ▼
  ┌────────────────────────┐
  │ Step 5: Ask Gemini     │  Review Gemini AI summary of boost, fuel rail delta,
  │ Deep Insights          │  and knock risk. Ask questions using quick prompts.
  └────────────────────────┘
-`
+```
 
 ### Auto-Watch Monitored Locations:
 The watcher scans every 1.5 seconds across:
-- %USERPROFILE%\Documents\Holley\Terminator X V3\Data Logs\
-- %USERPROFILE%\OneDrive\Documents\Holley\Terminator X V3\Data Logs\
-- %USERPROFILE%\Documents\Holley\Terminator X V3\Global Files\
-- G:\My Drive\Holley\
-- Connected USB Flash Drives / SD Cards (D:\, E:\, F:\, G:\, H:\)
+- `%USERPROFILE%\Documents\Holley\Terminator X V3\Data Logs\`
+- `%USERPROFILE%\OneDrive\Documents\Holley\Terminator X V3\Data Logs\`
+- `%USERPROFILE%\Documents\Holley\Terminator X V3\Global Files\`
+- `G:\My Drive\Holley\`
+- Connected USB Flash Drives / SD Cards (`D:\`, `E:\`, `F:\`, `G:\`, `H:\`)
 
 Whenever a file is saved or dragged into the window:
 1. **Audio Bell Chime** plays alert in the browser.
-2. **16×16 VE Table** calculates corrections and writes COPY 16x16 VE TABLE (CTRL+V).txt right next to the executable.
+2. **16×16 VE Table** calculates corrections, generates `COPY 16x16 VE TABLE (CTRL+V).txt` right next to the executable, and allows direct 1-click patching to `.terx` tune binaries with IEEE 802.3 CRC-32 checksum recalculation.
 3. **Gemini Copilot** produces an engineering explanation of boost ramp rate, fuel rail pressure vs boost 1:1 tracking, and transient lambda safety.
 
+### Two Dedicated Workspaces: `⚡ Live Dash` vs `🎯 Tuning Studio`
+Use the centered mode switcher at the top of the screen to switch views (persists across refreshes):
+- **`⚡ Live Dash`**: Uncluttered trackside instrumentation HUD with 4 quick presets:
+  - **Drag Strip**: High-contrast, large-format staging RPM, target boost vs manifold MAP, AFR vs target, and fuel rail delta.
+  - **Street Cruiser**: Coolant temp, oil pressure, battery voltage, MAT, and TPS.
+  - **Dyno / Tuning**: Cell tracking, AFR error %, fuel learn %, and knock retard.
+  - **Sensor Health**: Real-time circuit diagnostic badges (`⚠️ SHORT GND`, `⚠️ OPEN CKT`, `⚠️ OOR`) decoded straight from the 29-bit CAN stream.
+- **`🎯 Tuning Studio`**: The dual-panel AI Calibration Co-Driver and 16×16 Fuel VE Optimizer table.
 
 ### Safety & Confidence Features
 
@@ -154,11 +163,24 @@ Whenever a file is saved or dragged into the window:
 
 ---
 
-## 6. Troubleshooting Matrix
+## 6. Connection Diagnostics & Troubleshooting Matrix
+
+### 🩺 1-Click Connection Diagnostics & Log Mirroring
+When connecting your laptop to the Fairmont in the paddock or garage, the app automatically logs connection events, WinUSB handle locks, and live CAN frame rates:
+1. **Local Persistent Log**: Saved to `logs/holley_copilot.log` (rotating 3 MB handler with 3 backups).
+2. **Automatic Google Drive Mirror**: If Google Drive is mounted on your laptop (`G:\My Drive\Holley\`), logs are mirrored to `G:\My Drive\Holley\logs\holley_copilot.log` in real time.
+3. **1-Click Diagnostic Copy**: Click the **`🩺`** button in the top right header at any time. It packages:
+   - System & environment status (OS, Python runtime, executable path).
+   - WinUSB driver availability & process handle locks (identifies if Holley software is blocking the port).
+   - CAN bus adapter discovery and active frame rate counters.
+   - The last 120 lines of raw application logs.
+   Simply paste the clipboard into the prompt for immediate AI evaluation!
+
+### Troubleshooting Matrix
 
 | Symptom | Probable Cause | Corrective Action |
 |:--------|:---------------|:------------------|
-| **Holley cable not detected** | Cable unplugged or loose USB connection | Firmly plug the Holley 558-443 cable directly into a laptop USB port (avoid unpowered USB hubs). |
+| **Holley cable not detected** | Cable unplugged or loose USB connection | Firmly plug the Holley 558-443 cable directly into a laptop USB port (avoid unpowered USB hubs). Click **`🩺`** to inspect detected devices. |
 | **WinUSB Access Denied (Error 5 / 32)** | Holley Terminator X software is open | Close Holley EFI tuning software before starting Copilot. WinUSB enforces exclusive single-app access. |
 | **0 frames received** (Preflight fails) | Ignition key is in OFF position | Turn ignition switch to RUN/ON to power the ECU. |
 | **0 frames received** | Holley broadcast disabled in calibration | Enable CAN Broadcast in Holley software (Section 4). |

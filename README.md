@@ -6,50 +6,70 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Google GenAI: Gemini 2.5](https://img.shields.io/badge/AI-Google_Gemini_2.5-4285F4.svg)](https://aistudio.google.com/)
 [![Executable: Standalone .EXE](https://img.shields.io/badge/Windows-Standalone_.EXE-00e676.svg)]()
-[![Tests: 111 Passing](https://img.shields.io/badge/Tests-111%2F111_Passing-brightgreen.svg)]()
+[![Tests: 135 Passing](https://img.shields.io/badge/Tests-135%2F135_Passing-brightgreen.svg)]()
 
 ---
 
 ## ⚡ BLUF (Bottom Line Up Front)
 
-**Holley EFI Intelligence Copilot** is a streamlined companion application that pairs an expert calibration assistant powered by **Google Gemini 2.5** with an automated **16×16 Fuel VE Optimizer**.
-
-It eliminates complex gauge clusters and hardware conflicts, focusing 100% on **tuning reasoning, datalog analysis, and cell-by-cell VE corrections**:
+**Holley EFI Intelligence Copilot** is a high-performance calibration and telemetry companion that combines a **Customizable Live Digital HUD**, an automated **16×16 Fuel VE Table Optimizer**, and an expert tuning assistant powered by **Google Gemini 2.5**.
 
 1. **Standalone Single Executable (`Holley_EFI_Copilot.exe`)**:
    - Zero installation, zero dependencies, zero Python required on your tuning laptop.
    - Simply double-click **`Holley_EFI_Copilot.exe`**; it boots the server, launches your browser to `http://127.0.0.1:8420`, and immediately begins watching your Holley folders.
-2. **Zero-Touch Auto-Pilot Datalog Ingestion**:
+2. **Two Clean, Dedicated Workspaces**:
+   - **`⚡ Live Dash`**: High-contrast, full-screen digital instrument cluster with 4 presets (*Drag Strip*, *Street Cruiser*, *Dyno Tuning*, *Sensor Health*), 4 modular gauge styles (Radial Swept Dial, Linear Level Bar, Digital Stat Box, Rolling Sparkline), and real-time hardware circuit fault badges.
+   - **`🎯 Tuning Studio`**: The dual-panel AI Calibration Copilot and 16×16 Fuel VE Optimizer.
+3. **Zero-Touch Auto-Pilot Datalog Ingestion**:
    - Automatically monitors `Documents\Holley\Terminator X V3\Data Logs\`, Google Drive, and handheld SD cards.
    - When you click "Stop Datalog" in Holley software, the Copilot ingests the run in **~1.5 seconds**, slices out the WOT pull, updates the 16×16 VE table, and Gemini automatically reviews the pass in your studio chat with voice announcements.
-3. **1-Click Copy & `Ctrl+V` Paste into Holley**:
-   - Click **`📋 COPY 16×16 VE (CTRL+V)`** in the web studio (or open the auto-generated `COPY 16x16 VE TABLE (CTRL+V).txt` on disk).
-   - In Holley Terminator X software (**Fuel ICF → Base Fuel Table**), click cell `(500 RPM, 20 kPa)` and press **`Ctrl+V`**.
+4. **Direct `.terx` Tune File Saving & 1-Click `Ctrl+V`**:
+   - Save corrections directly into your `.terx` calibration file with automatic IEEE 802.3 CRC-32 recalculation.
+   - Or click **`📋 COPY 16×16 VE (CTRL+V)`** to paste directly into Holley software (**Fuel ICF → Base Fuel Table**).
+5. **Persistent Connection Diagnostics**:
+   - Automatically logs USB-CAN handshakes, WinUSB handle locks, and telemetry frame rates to `logs/holley_copilot.log` (mirrored to `G:\My Drive\Holley\logs\`).
+   - One-click **`🩺`** button in the header copies a complete hardware diagnostic snapshot straight to your clipboard.
 
 ---
 
-## 🖥️ Studio Architecture: Streamlined Two-Panel Workspace
+## 🖥️ Studio Architecture: Two Dedicated Modes
 
 ```
+╔════════════════════════════════════════════════════════════════════════════════════════╗
+║ ⚡ HOLLEY EFI COPILOT   1980 Fairmont 4.8L Turbo LS   [⚡ Live Dash] [🎯 Tuning Studio] 🩺 ║
+╚════════════════════════════════════════════════════════════════════════════════════════╝
+
+MODE 1: ⚡ LIVE DIGITAL HUD (Cockpit & Trackside Instrumentation)
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ ⚡ HOLLEY EFI COPILOT   1980 Fairmont 4.8L Turbo LS   [✨ GEMINI 2.5]  [📋 COPY 16x16] │
-├───────────────────────────────────────────┬────────────────────────────────────────────┤
+│ PRESETS: [🏁 Drag Strip] [🚗 Street Cruiser] [🎯 Dyno / Tuning] [🩺 Sensor Health]    │
+├─────────────────────┬─────────────────────┬─────────────────────┬──────────────────────┤
+│    ENGINE RPM       │    BOOST PRESSURE   │  FUEL RAIL PRESSURE │  WIDEBAND AFR (AVG)  │
+│   [ 6,240 RPM ]     │     [ 14.8 PSI ]    │   [ 72.8 PSI ]      │     [ 11.4 AFR ]     │
+│   (Radial Dial)     │    (Radial Dial)    │    (Linear Bar)     │     (Linear Bar)     │
+├─────────────────────┼─────────────────────┼─────────────────────┼──────────────────────┤
+│  TRANSBRAKE STATUS  │  4L80E INPUT RPM    │ KNOCK RETARD TRACE  │  COOLANT / TRANS     │
+│     [ LOCKED ]      │    [ 3,180 RPM ]    │   [ 0.0° Retard ]   │   192°F  │  185°F    │
+│     (Stat Box)      │     (Stat Box)      │  (Sparkline Chart)  │      (Stat Box)      │
+└─────────────────────┴─────────────────────┴─────────────────────┴──────────────────────┘
+
+MODE 2: 🎯 TUNING STUDIO (Dual-Panel Calibration & VE Optimizer)
+┌───────────────────────────────────────────┬────────────────────────────────────────────┐
 │   🤖 AI CALIBRATION CO-DRIVER (LEFT)      │   🎯 16×16 FUEL VE OPTIMIZER (RIGHT)       │
 │                                           │                                            │
-│   📥 Drag & Drop Holley .dl/.dlz Log Here │   [x] Fold Fuel Learn % into Base VE       │
-│                                           │                                            │
-│   [⛽ 1:1 Fuel PSI]  [📈 WOT & AFR Safety] │   🏁 POST-PULL VERDICT:                    │
-│   [🎯 16x16 VE Map]  [🔍 Idle Stability]   │   Peak 14.1 PSI @ 6,100 RPM • AFR 11.4     │
-│   [🏎️ Staging]       [⚙️ 4L80E Converter]  │   58.2 PSI Effective Rail Delta (Verified) │
-│                                           │                                            │
-│   💬 Gemini Conversational Feed:          │   ┌─────┬──────┬──────┬──────┬──────┐      │
-│   "Your 2nd gear pull maintained 58.2 PSI │   │ RPM │ 20k  │ 100k │ 180k │ 260k │      │
-│    differential across 14 PSI boost. Rail │   ├─────┼──────┼──────┼──────┼──────┤      │
-│    pressure peaked at 72.4 PSI. VE cells  │   │ 5200│  58  │  84  │ 112+4│ 128  │      │
-│    between 5000-5600 RPM / 180 kPa require│   │ 5600│  61  │  88  │ 118+3│ 134  │      │
-│    a +3.5% trim to meet target 11.5 AFR." │   └─────┴──────┴──────┴──────┴──────┘      │
-│                                           │                                            │
-│   [Ask Gemini anything about your tune...]│   [📋 Copy Suggested VE]  [📋 Copy % Trims]│
+│   📥 Drag & Drop Holley .dl/.dlz Log Here │   Tune: [Default Turbo LS ▼]  Revisions (3)│
+│                                           │   [x] Fold Fuel Learn % into Base VE       │
+│   [⛽ 1:1 Fuel PSI]  [📈 WOT & AFR Safety] │                                            │
+│   [🎯 16x16 VE Map]  [🔍 Idle Stability]   │   🏁 POST-PULL VERDICT:                    │
+│   [🏎️ Staging]       [⚙️ 4L80E Converter]  │   Peak 14.8 PSI @ 6,240 RPM • AFR 11.4     │
+│                                           │   58.0 PSI Effective Rail Delta (Verified) │
+│   💬 Gemini Conversational Feed:          │                                            │
+│   "Your 2nd gear pull maintained 58.0 PSI │   ┌─────┬──────┬──────┬──────┬──────┐      │
+│    differential across 14.8 PSI boost.    │   │ RPM │ 20k  │ 100k │ 180k │ 260k │      │
+│    Rail pressure peaked at 72.8 PSI. VE   │   ├─────┼──────┼──────┼──────┼──────┤      │
+│    cells between 5000-5600 RPM / 180 kPa  │   │ 5200│  58  │  84  │ 112+4│ 128  │      │
+│    require a +3.2% trim for 11.5 target." │   │ 5600│  61  │  88  │ 118+3│ 134  │      │
+│                                           │   └─────┴──────┴──────┴──────┴──────┘      │
+│   [Ask Gemini anything about your tune...]│   [💾 Save to .terx]  [📋 Copy 16x16 VE]   │
 └───────────────────────────────────────────┴────────────────────────────────────────────┘
 ```
 
@@ -184,6 +204,7 @@ tests/test_vehicle.py ...                                                [100%]
 ## 📄 Documentation Directory
 
 - [`docs/AI_ARCHITECTURE.md`](docs/AI_ARCHITECTURE.md) — Grounded LLM reasoning layer, tool calling schemas, and safety isolation.
+- [`docs/HOLLEY_CAN_PROTOCOL_REVERSED.md`](docs/HOLLEY_CAN_PROTOCOL_REVERSED.md) — Complete reverse-engineered 29-bit CAN arbitration, RPC multi-frame streaming, and hardware circuit fault bitfield specification.
 - [`docs/CAN_PROTOCOL.md`](docs/CAN_PROTOCOL.md) — Holley standard HEFI & Racepak 1 Mbps CAN channel specifications.
 - [`docs/HOLLEY_USB_CAN_INTERFACE.md`](docs/HOLLEY_USB_CAN_INTERFACE.md) — WinUSB driver reverse-engineering for Holley 558-443 cable.
 - [`FIELD_GUIDE.md`](FIELD_GUIDE.md) — Trackside tuning and hardware wiring field manual.
